@@ -33,8 +33,18 @@ class Rules:
             return cls()
         with path.open(encoding="utf-8") as source:
             values = json.load(source)
+        if isinstance(values, dict) and "profile_version" in values:
+            # Import here so the CLI and GUI share profiles without importing Tkinter.
+            from project_profiles import ProjectProfile
+            return ProjectProfile.from_dict(values).rules
+        return cls.from_dict(values)
+
+    @classmethod
+    def from_dict(cls, values: object) -> Rules:
+        """Validate file or GUI settings through the same rules, without mutating input."""
         if not isinstance(values, dict):
             raise ValueError("configuration must be a JSON object")
+        values = dict(values)
         unknown = set(values) - {field.name for field in fields(cls)}
         if unknown:
             raise ValueError(f"unknown configuration keys: {', '.join(sorted(unknown))}")
@@ -59,7 +69,11 @@ class Rules:
                 values[key] = tuple(items)
         if "min_duration_seconds" in values:
             duration = values["min_duration_seconds"]
-            if type(duration) not in (int, float) or not math.isfinite(duration) or duration < 0:
+            try:
+                valid = type(duration) in (int, float) and math.isfinite(duration) and duration >= 0
+            except OverflowError:
+                valid = False
+            if not valid:
                 raise ValueError("min_duration_seconds must be a finite, nonnegative number")
         return cls(**values)
 
