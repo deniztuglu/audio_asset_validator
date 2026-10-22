@@ -90,6 +90,16 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Rules.from_dict({"min_duration_seconds": 10 ** 1000})
 
+    def test_supplied_example_profiles_load_with_the_cli_rule_loader(self):
+        folder = Path(__file__).resolve().parents[1] / "profiles"
+        paths = sorted(folder.glob("*.json"))
+        self.assertEqual(len(paths), 3)
+        for path in paths:
+            with self.subTest(path=path):
+                profile = ProjectProfile.load(path)
+                self.assertEqual(Rules.load(path), profile.rules)
+                self.assertIsNotNone(re.fullmatch(profile.rules.naming_pattern, profile.naming.example()))
+
 
 if __name__ == "__main__":
     unittest.main()
