@@ -156,20 +156,33 @@ Closing the window requests cancellation; scans do not modify source audio.
 python3 -m unittest discover -s tests -v
 ```
 
-With working Tk and a display, there are **58 tests**: the unchanged 28 V1 tests,
-17 additional configuration/naming/worker tests, and 13 real Tk interaction tests.
+With working Tk and a display, there are **63 tests**: the unchanged 28 V1 tests,
+22 additional configuration/naming/worker/encoding tests, and 13 real Tk interaction tests.
 The GUI tests create temporary audio, exercise real widgets and the event loop,
 and stub native file dialogs/message boxes to keep the run noninteractive. They
 keep one Tk interpreter alive for the class and create a separate `Toplevel`
 window for each test, rather than repeatedly destroying/recreating Tk itself.
 Test windows appearing briefly is expected; no manual interaction is required.
 
-Without a display or Tk installation, the 45 non-GUI tests still run and the GUI
+Without a display or Tk installation, the 50 non-GUI tests still run and the GUI
 class is explicitly skipped. A skipped GUI run does not establish desktop readiness.
 On Linux CI, run the same suite under an Xvfb display when available.
 
-This implementation was exercised with Python 3.12 and Tk 9 on a virtual Linux
-display, including a 1000x680 window. Native macOS behavior still needs verification.
+This implementation was exercised with Python 3.12.14 and 3.15.0rc3 on a virtual
+Linux display, including a 1000x680 window. Native macOS behavior still needs verification.
+
+### A float-WAV format test fails after updating Python
+
+Python 3.15 adds IEEE float decoding to `wave`, so a file being readable no longer
+implies integer PCM. The validator now explicitly checks the decoder's encoding
+when the newer `getformat()` API is available. On older Python versions, `wave`
+itself rejects unsupported encodings. Float WAV remains outside V1/Part 2 even if
+32-bit or 64-bit is selected as an allowed depth; integer PCM and supported
+extensible PCM continue to work. Five encoding regression tests cover these cases.
+
+If `test_float_encoded_wav_is_unsupported` fails with `'PASS' != 'ERROR'`, pull the
+latest Part 2 changes and rerun. Keep the updated Python installation. The original
+test is preserved; the application must enforce the same policy on both runtimes.
 
 ## Troubleshooting a macOS crash during tests
 
@@ -197,7 +210,7 @@ or the correction verified on a Mac; a native rerun remains necessary.
    If the version is still `3.12.0`, your shell is still selecting the old Python;
    select the newly installed interpreter before retrying.
 3. Run `python3 -m tkinter` and close its test window. Then run
-   `python3 -m unittest discover -s tests -v`. Expect **58 tests** and **OK**;
+   `python3 -m unittest discover -s tests -v`. Expect **63 tests** and **OK**;
    the GUI windows are part of the tests. Wait for the shell prompt to return.
 4. Start the actual application separately with `python3 gui.py`. This command
    remains running until you close the application; it does not print a test summary.
@@ -231,7 +244,7 @@ That is useful isolation, but does not establish GUI readiness.
       and leaves export disabled for the partial scan.
 - [ ] Editing rules after a scan disables export until rescanning.
 - [ ] Resize the window; rules remain scrollable and scan/export buttons remain visible.
-- [ ] Automated suite reports 58 passing tests with no GUI skips on the Mac.
+- [ ] Automated suite reports 63 passing tests with no GUI skips on the Mac.
 
 ## Code map
 

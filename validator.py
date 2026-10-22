@@ -144,6 +144,16 @@ def validate_file(path: Path, root: Path, rules: Rules) -> AssetResult:
 
     try:
         with wave.open(str(path), "rb") as audio:
+            # Python 3.15+ can also decode IEEE float WAV. Readability alone no
+            # longer establishes our integer-PCM policy. Older wave versions
+            # reject non-PCM encodings during open and have no getformat().
+            if hasattr(audio, "getformat"):
+                encoding = audio.getformat()
+                if encoding not in (wave.WAVE_FORMAT_PCM, wave.WAVE_FORMAT_EXTENSIBLE):
+                    raise wave.Error(
+                        f"unsupported WAV encoding 0x{encoding:04x}: expected integer PCM"
+                    )
+                # For EXTENSIBLE, wave validates the integer-PCM subtype GUID.
             rate = audio.getframerate()
             channels = audio.getnchannels()
             bit_depth = audio.getsampwidth() * 8
