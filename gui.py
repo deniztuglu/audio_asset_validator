@@ -31,7 +31,7 @@ FILTERS = {"All files": None, "Errors": "ERROR", "Warnings": "WARNING", "Passed"
 
 
 class ValidatorApp:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk | tk.Toplevel):
         self.root = root
         self.worker: ScanWorker | None = None
         self.busy = False
@@ -40,6 +40,7 @@ class ValidatorApp:
         self.dirty = False
         self._applying = False
         self._closed = False
+        self._variable_traces: list[tuple[tk.Variable, str]] = []
         self._scan_root: Path | None = None
         self._scan_profile = ProjectProfile()
         self.results: list[AssetResult] = []
@@ -47,42 +48,45 @@ class ValidatorApp:
         self._editable: list[tuple[ttk.Widget, str]] = []
         self._preset_controls: list[ttk.Widget] = []
         self._rule_canvases: list[tk.Canvas] = []
-        self.folder = tk.StringVar()
-        self.profile_name = tk.StringVar()
-        self.naming_mode = tk.StringVar(value="preset")
-        self.prefixes = {prefix: tk.BooleanVar() for prefix in PREFIXES}
-        self.capitalization = tk.StringVar()
-        self.variation_digits = tk.StringVar()
-        self.regex = tk.StringVar()
-        self.sample_rate = tk.StringVar()
-        self.depths = {depth: tk.BooleanVar() for depth in (8, 16, 24, 32)}
-        self.other_depths = tk.StringVar()
-        self.channels = {count: tk.BooleanVar() for count in (1, 2)}
-        self.other_channels = tk.StringVar()
-        self.minimum_duration = tk.StringVar()
-        self.test_filename = tk.StringVar(value="SFX_Footstep_Concrete_01.wav")
-        self.preview = tk.StringVar()
-        self.example = tk.StringVar()
-        self.summary = tk.StringVar(value="Choose an audio folder, review the rules, then scan.")
-        self.profile_status = tk.StringVar(value="Default profile : save a copy for your project.")
-        self.result_filter = tk.StringVar(value="All files")
+        self.folder = tk.StringVar(master=root)
+        self.profile_name = tk.StringVar(master=root)
+        self.naming_mode = tk.StringVar(master=root, value="preset")
+        self.prefixes = {prefix: tk.BooleanVar(master=root) for prefix in PREFIXES}
+        self.capitalization = tk.StringVar(master=root)
+        self.variation_digits = tk.StringVar(master=root)
+        self.regex = tk.StringVar(master=root)
+        self.sample_rate = tk.StringVar(master=root)
+        self.depths = {depth: tk.BooleanVar(master=root) for depth in (8, 16, 24, 32)}
+        self.other_depths = tk.StringVar(master=root)
+        self.channels = {count: tk.BooleanVar(master=root) for count in (1, 2)}
+        self.other_channels = tk.StringVar(master=root)
+        self.minimum_duration = tk.StringVar(master=root)
+        self.test_filename = tk.StringVar(master=root, value="SFX_Footstep_Concrete_01.wav")
+        self.preview = tk.StringVar(master=root)
+        self.example = tk.StringVar(master=root)
+        self.summary = tk.StringVar(master=root, value="Choose an audio folder, review the rules, then scan.")
+        self.profile_status = tk.StringVar(master=root, value="Default profile : save a copy for your project.")
+        self.result_filter = tk.StringVar(master=root, value="All files")
         self._build_window()
         for variable in (self.profile_name, self.naming_mode, self.capitalization,
                          self.variation_digits, self.regex, self.sample_rate,
                          self.other_depths, self.other_channels, self.minimum_duration,
                          *self.prefixes.values(), *self.depths.values(), *self.channels.values()):
-            variable.trace_add("write", self._form_changed)
-        self.folder.trace_add("write", self._folder_changed)
-        self.test_filename.trace_add("write", lambda *_: self._update_preview())
+            self._trace(variable, self._form_changed)
+        self._trace(self.folder, self._folder_changed)
+        self._trace(self.test_filename, lambda *_: self._update_preview())
         self.apply_profile(ProjectProfile())
         self.root.protocol("WM_DELETE_WINDOW", self.close)
-        if sys.platform == "darwin":
+        if sys.platform == "darwin" and isinstance(root, tk.Tk):
             self.root.createcommand("::tk::mac::Quit", self.close)
         modifier = "Command" if sys.platform == "darwin" else "Control"
         self.root.bind(f"<{modifier}-o>", lambda _: self.load_profile())
         self.root.bind(f"<{modifier}-s>", lambda _: self.save_profile())
         self.root.bind(f"<{modifier}-r>", lambda _: self.start_scan())
         self._poll_id = self.root.after(40, self._poll)
+
+    def _trace(self, variable: tk.Variable, callback) -> None:
+        self._variable_traces.append((variable, variable.trace_add("write", callback)))
 
     def _edit(self, widget: ttk.Widget, state: str = "normal") -> ttk.Widget:
         self._editable.append((widget, state))
@@ -96,9 +100,9 @@ class ValidatorApp:
         style = ttk.Style(self.root)
         if sys.platform.startswith("linux") and "clam" in style.theme_names():
             style.theme_use("clam")
-        self._title_font = font.nametofont("TkDefaultFont").copy()
+        self._title_font = font.nametofont("TkDefaultFont", root=self.root).copy()
         self._title_font.configure(size=20, weight="bold")
-        self._heading_font = font.nametofont("TkDefaultFont").copy()
+        self._heading_font = font.nametofont("TkDefaultFont", root=self.root).copy()
         self._heading_font.configure(size=12, weight="bold")
         style.configure("Title.TLabel", font=self._title_font)
         style.configure("Heading.TLabel", font=self._heading_font)
@@ -544,12 +548,18 @@ class ValidatorApp:
             messagebox.showerror("Cannot export CSV", str(error), parent=self.root)
 
     def close(self) -> None:
+        if self._closed:
+            return
         if self.dirty and not messagebox.askyesno("Unsaved profile", "Close without saving your profile changes?", parent=self.root):
             return
         self._closed = True
         if self.worker:
             self.worker.cancel()
+        self.progress.stop()
         self.root.after_cancel(self._poll_id)
+        for variable, trace_id in self._variable_traces:
+            variable.trace_remove("write", trace_id)
+        self._variable_traces.clear()
         self.root.destroy()
 
 

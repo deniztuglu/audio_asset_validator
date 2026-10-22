@@ -27,10 +27,13 @@ class GuiTests(unittest.TestCase):
         if tk is None:
             raise unittest.SkipTest("Tkinter is not installed; CLI and model tests still run")
         try:
-            root = tk.Tk()
-            root.destroy()
+            # Keep one Tcl/Tk interpreter for the entire suite. Repeated Tk()
+            # destruction/recreation can leave native Cocoa state on older macOS Tk.
+            cls.tk_root = tk.Tk()
         except tk.TclError as error:
             raise unittest.SkipTest(f"GUI display unavailable: {error}")
+        cls.tk_root.withdraw()
+        cls.addClassCleanup(cls.tk_root.destroy)
         from gui import ValidatorApp
         cls.app_class = ValidatorApp
 
@@ -40,9 +43,9 @@ class GuiTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         self.assets = self.directory / "audio"
         generate(self.assets)
-        self.root = tk.Tk()
+        self.root = tk.Toplevel(self.tk_root)
         self.callback_errors = []
-        self.root.report_callback_exception = lambda *args: self.callback_errors.append(args)
+        self.tk_root.report_callback_exception = lambda *args: self.callback_errors.append(args)
         self.app = self.app_class(self.root)
         self.errors = patch("gui.messagebox.showerror").start()
         self.confirm = patch("gui.messagebox.askyesno", return_value=True).start()
@@ -56,6 +59,7 @@ class GuiTests(unittest.TestCase):
         if self.app.worker:
             self.app.worker.join(timeout=3)
             self.assertFalse(self.app.worker.is_alive())
+        self.tk_root.update()
         self.assertEqual(self.callback_errors, [])
 
     def pump_until(self, predicate):
@@ -85,6 +89,21 @@ class GuiTests(unittest.TestCase):
         self.assertIsNotNone(re.fullmatch(self.app.profile_from_controls().rules.naming_pattern,
                                          "DX_HELLO_001.wav"))
         self.assertTrue(self.app.dirty)
+
+    def test_window_close_keeps_interpreter_alive_and_removes_callbacks(self):
+        interpreter = self.app.root.tk
+        poll_id = self.app._poll_id
+        traced_variables = [variable for variable, _ in self.app._variable_traces]
+        self.app.close()
+        self.app.close()  # Closing twice is safe and must not access destroyed widgets.
+        self.assertTrue(self.tk_root.winfo_exists())
+        self.assertNotIn(poll_id, self.tk_root.tk.call("after", "info"))
+        self.assertTrue(all(not variable.trace_info() for variable in traced_variables))
+        another_window = tk.Toplevel(self.tk_root)
+        try:
+            self.assertIs(another_window.tk, interpreter)
+        finally:
+            another_window.destroy()
 
     def test_audio_controls_create_validated_rules(self):
         self.app.sample_rate.set("96000")

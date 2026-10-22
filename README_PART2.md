@@ -156,10 +156,13 @@ Closing the window requests cancellation; scans do not modify source audio.
 python3 -m unittest discover -s tests -v
 ```
 
-With working Tk and a display, there are **57 tests**: the unchanged 28 V1 tests,
-17 additional configuration/naming/worker tests, and 12 real Tk interaction tests.
+With working Tk and a display, there are **58 tests**: the unchanged 28 V1 tests,
+17 additional configuration/naming/worker tests, and 13 real Tk interaction tests.
 The GUI tests create temporary audio, exercise real widgets and the event loop,
-and stub native file dialogs/message boxes to keep the run noninteractive.
+and stub native file dialogs/message boxes to keep the run noninteractive. They
+keep one Tk interpreter alive for the class and create a separate `Toplevel`
+window for each test, rather than repeatedly destroying/recreating Tk itself.
+Test windows appearing briefly is expected; no manual interaction is required.
 
 Without a display or Tk installation, the 45 non-GUI tests still run and the GUI
 class is explicitly skipped. A skipped GUI run does not establish desktop readiness.
@@ -167,6 +170,48 @@ On Linux CI, run the same suite under an Xvfb display when available.
 
 This implementation was exercised with Python 3.12 and Tk 9 on a virtual Linux
 display, including a 1000x680 window. Native macOS behavior still needs verification.
+
+## Troubleshooting a macOS crash during tests
+
+The message `Secure coding is not enabled for restorable state` is a macOS/Tk
+window-restoration warning. It is separate from a process crash. A segmentation
+fault is not a passing test run, even if a window appeared first.
+
+A user report from Python 3.12.0 with Tk 8.6 on macOS 14.4.1 shows the main thread
+crashing in Cocoa while `PbarElementDraw` draws a native progress bar. That stack
+does not establish a naming/Unicode or audio-validation error. The test harness
+now avoids repeated Tk interpreter destruction and explicitly cleans up variable
+traces and progress/poll callbacks on close. The crash has not been reproduced
+or the correction verified on a Mac; a native rerun remains necessary.
+
+1. Pull the latest Part 2 branch changes.
+2. Install a current macOS Python release from
+   <https://www.python.org/downloads/macos/> to update the older bundled Tk runtime,
+   then reopen Terminal. Confirm which interpreter you are running:
+
+   ```sh
+   python3 --version
+   python3 -c "import sys; print(sys.executable)"
+   ```
+
+   If the version is still `3.12.0`, your shell is still selecting the old Python;
+   select the newly installed interpreter before retrying.
+3. Run `python3 -m tkinter` and close its test window. Then run
+   `python3 -m unittest discover -s tests -v`. Expect **58 tests** and **OK**;
+   the GUI windows are part of the tests. Wait for the shell prompt to return.
+4. Start the actual application separately with `python3 gui.py`. This command
+   remains running until you close the application; it does not print a test summary.
+
+If the crash persists, capture the complete test output and the new crash report.
+For a focused GUI rerun with Python fault diagnostics enabled:
+
+```sh
+python3 -X faulthandler -m unittest discover -s tests -p 'test_gui.py' -v
+```
+
+To check the original engine independently, run
+`python3 -m unittest discover -s tests -p 'test_validator.py' -v` (28 tests).
+That is useful isolation, but does not establish GUI readiness.
 
 ## Mac acceptance checklist before merging
 
@@ -186,7 +231,7 @@ display, including a 1000x680 window. Native macOS behavior still needs verifica
       and leaves export disabled for the partial scan.
 - [ ] Editing rules after a scan disables export until rescanning.
 - [ ] Resize the window; rules remain scrollable and scan/export buttons remain visible.
-- [ ] Automated suite reports 57 passing tests with no GUI skips on the Mac.
+- [ ] Automated suite reports 58 passing tests with no GUI skips on the Mac.
 
 ## Code map
 
