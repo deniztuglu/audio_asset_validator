@@ -5,6 +5,11 @@ FMOD, Wwise, or a game engine. It scans nested folders, reports actionable error
 warnings, and exports a CSV with one row per check. No DAW, middleware installation,
 third-party Python packages, or credentials are needed.
 
+**Part 2 desktop interface:** run `python3 gui.py` to choose folders, edit rules,
+save/load project profiles, inspect results, and export CSV reports. See
+[the desktop guide and Mac verification checklist](README_PART2.md). The existing
+CLI below remains available; conversion is not implemented.
+
 ## Quick start
 
 Requires **Python 3.10 or later** on macOS or Linux. Check with `python3 --version`.
@@ -146,6 +151,9 @@ python3 -m unittest discover -s tests -v
 Tests generate their own temporary PCM WAVs. They exercise the six rules, configurable
 policies, malformed and truncated data, unsupported encodings, symlinks, CSV content,
 CLI exit statuses, scan errors, and preservation of source bytes.
+The original 28 V1 tests are unchanged. Additional tests cover profiles, naming
+presets, background scans, and the desktop interface. GUI tests need Tk and a
+graphical display; otherwise that test class is explicitly skipped.
 
 ## Verify the project on your Mac
 
@@ -155,7 +163,8 @@ CLI exit statuses, scan errors, and preservation of source bytes.
 2. Run `python3 --version`. Use Python 3.10 or later (3.12+ recommended). If needed,
    install a current Python 3 release from <https://www.python.org/downloads/macos/>,
    then reopen Terminal. No `pip install` step is needed.
-3. Run `python3 -m unittest discover -s tests -v`. Expect **28 tests** and **OK**.
+3. Run `python3 -m unittest discover -s tests -v`. Expect **57 tests** and **OK**
+   when Tk and a graphical display are available; see the Part 2 guide for details.
 4. Run the demo commands above. The expected seven error files and one warning file
    are intentional: they demonstrate that problems are detected. Open the report
    with `open reports/demo.csv` to inspect individual checks in your spreadsheet app.
