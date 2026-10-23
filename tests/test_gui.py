@@ -16,6 +16,7 @@ except ImportError:
     tk = None
 
 from naming_rules import NamingPreset
+from batch_rename import RenameOptions
 from project_profiles import ProjectProfile
 from tools.generate_demo import generate
 from validator import Rules, scan_files, validate_file
@@ -54,6 +55,15 @@ class GuiTests(unittest.TestCase):
 
     def tearDown(self):
         self.app.dirty = False
+        dialog = self.app.rename_dialog
+        if dialog and not dialog._closed:
+            if dialog.busy:
+                dialog.cancel()
+                self.pump_until(lambda: not dialog.busy)
+            if dialog.worker:
+                dialog.worker.join(timeout=3)
+                self.assertFalse(dialog.worker.is_alive())
+            dialog.request_close()
         if not self.app._closed:
             self.app.close()
         if self.app.worker:
@@ -75,6 +85,130 @@ class GuiTests(unittest.TestCase):
         self.app.scan_button.invoke()
         self.assertTrue(self.app.busy)
         self.pump_until(lambda: not self.app.busy)
+
+    def renamer(self, filenames):
+        self.scan()
+        indices = [str(i) for i, asset in enumerate(self.app.results) if asset.file in filenames]
+        self.app.tree.selection_set(indices)
+        self.root.update()
+        with patch("rename_dialog.preset_path", return_value=self.directory / "rename-presets.json"):
+            self.app.rename_button.invoke()
+        return self.app.rename_dialog
+
+    def test_rename_button_opens_popup_for_only_the_selected_assets(self):
+        self.assertTrue(self.app.rename_button.instate(["disabled"]))
+        names = {"SFX_UI_Click_01.wav", "SFX_Explosion_03.wav"}
+        dialog = self.renamer(names)
+        self.assertEqual({source.name for source in dialog.sources}, names)
+        self.assertEqual(dialog.read_options(), RenameOptions())
+        self.assertIsNotNone(dialog.window.grab_current())
+
+    def test_rename_preview_copy_and_revalidation_preserve_originals(self):
+        dialog = self.renamer({"footstep-final.wav", "nested/SFX_Footstep_Concrete_01.wav"})
+        before = (self.assets / "footstep-final.wav").read_bytes()
+        output = self.directory / "renamed"
+        dialog.output.set(str(output))
+        dialog.variables["find"].set("footstep-final")
+        dialog.variables["replacement"].set("SFX_Footstep_Concrete_01")
+        dialog.preview_button.invoke()
+        self.assertTrue(dialog.plan.can_apply)
+        self.assertFalse(output.exists())
+        dialog.apply_button.invoke()
+        self.assertTrue(dialog.busy)
+        self.pump_until(lambda: not dialog.busy)
+        self.assertEqual(dialog.outcome.error, "")
+        self.assertEqual(len(dialog.outcome.copies), 1)
+        self.assertEqual(dialog.outcome.copies[0].validation.status, "PASS")
+        self.assertEqual((output / "SFX_Footstep_Concrete_01.wav").read_bytes(), before)
+        self.assertEqual((self.assets / "footstep-final.wav").read_bytes(), before)
+        self.assertTrue(dialog.apply_button.instate(["disabled"]))
+        self.errors.assert_not_called()
+
+    def test_rename_collisions_and_invalid_output_disable_copy(self):
+        dialog = self.renamer({"SFX_UI_Click_01.wav", "SFX_Explosion_03.wav"})
+        dialog.output.set(str(self.directory / "renamed"))
+        dialog.variables["clear_existing"].set(True)
+        dialog.variables["replacement"].set("SFX_UI_New_01")
+        dialog.preview()
+        self.assertTrue(all(row.errors for row in dialog.plan.rows))
+        self.assertTrue(dialog.apply_button.instate(["disabled"]))
+        dialog.output.set(str(self.assets / "unsafe"))
+        dialog.preview()
+        self.assertIsNone(dialog.plan)
+        self.errors.assert_called_once()
+
+    def test_rename_edit_invalidates_preview_and_presets_restore_every_option(self):
+        dialog = self.renamer({"SFX_UI_Click_01.wav"})
+        dialog.output.set(str(self.directory / "renamed"))
+        dialog.variables["prefix"].set("New_")
+        dialog.preview()
+        self.assertIsNotNone(dialog.plan)
+        dialog.variables["suffix"].set("_Extra")
+        self.assertIsNone(dialog.plan)
+        self.assertEqual(dialog.tree.get_children(), ())
+        options = dialog.read_options()
+        dialog.load_preset(3)  # Empty slot selects it without discarding current edits.
+        dialog.save_preset()
+        dialog.load_preset(0)
+        self.assertEqual(dialog.read_options(), RenameOptions())
+        dialog.load_preset(3)
+        self.assertEqual(dialog.read_options(), options)
+        self.errors.assert_not_called()
+
+    def test_rename_regex_trim_range_and_add_controls_make_the_expected_name(self):
+        dialog = self.renamer({"SFX_UI_Click_01.wav"})
+        dialog.output.set(str(self.directory / "renamed"))
+        for key, value in {"find": r"SFX_(.*)_01", "replacement": r"\1", "use_regex": True,
+                           "trim_range": True, "range_start": "1", "range_end": "3",
+                           "prefix": "DX_", "suffix": "_001"}.items():
+            dialog.variables[key].set(value)
+        dialog.preview()
+        self.assertEqual(dialog.plan.rows[0].destination.name, "DX_Click_001.wav")
+        self.assertTrue(dialog.plan.rows[0].warnings)
+
+    def test_renamed_copy_still_reports_audio_metadata_errors(self):
+        dialog = self.renamer({"SFX_Explosion_03.wav"})
+        dialog.output.set(str(self.directory / "renamed"))
+        dialog.variables["find"].set("03")
+        dialog.variables["replacement"].set("04")
+        dialog.preview()
+        dialog.apply()
+        self.pump_until(lambda: not dialog.busy)
+        self.assertEqual(dialog.outcome.copies[0].validation.status, "ERROR")
+        self.assertIn("44100 Hz", dialog.notes.get("1.0", "end"))
+        self.assertIn("need validation review", dialog.status.get())
+
+    def test_parent_close_cancels_copy_and_waits_for_the_worker(self):
+        dialog = self.renamer({"SFX_UI_Click_01.wav"})
+        dialog.output.set(str(self.directory / "renamed"))
+        dialog.variables["find"].set("Click")
+        dialog.variables["replacement"].set("Tap")
+        dialog.preview()
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_validation(*args):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("test did not release output validation")
+            return validate_file(*args)
+
+        with patch("batch_rename.validate_file", side_effect=slow_validation):
+            dialog.apply()
+            try:
+                self.pump_until(entered.is_set)
+                heartbeat = []
+                self.root.after(0, lambda: heartbeat.append(True))
+                self.pump_until(lambda: bool(heartbeat))
+                self.app.close()
+                self.assertFalse(self.app._closed)
+                self.assertTrue(dialog._closing)
+            finally:
+                release.set()
+            self.pump_until(lambda: self.app._closed)
+        dialog.worker.join(timeout=3)
+        self.assertFalse(dialog.worker.is_alive())
+        self.assertTrue(dialog.outcome.cancelled)
+        self.assertTrue((self.assets / "SFX_UI_Click_01.wav").exists())
 
     def test_initial_defaults_and_live_preset_controls(self):
         self.assertEqual(self.app.profile_from_controls(), ProjectProfile())

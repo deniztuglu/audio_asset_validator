@@ -57,7 +57,7 @@ class RenameFileTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.audio = self.root / "audio"
         generate(self.audio)
         self.output = self.root / "renamed"
@@ -116,6 +116,16 @@ class RenameFileTests(unittest.TestCase):
         self.assertFalse(plan.can_apply)
         self.assertTrue(all(row.errors for row in plan.rows))
 
+    def test_case_and_unicode_normalized_output_collisions_are_blocked(self):
+        for first, second in (("Click_11.wav", "click_12.wav"), ("Café_11.wav", "Cafe\u0301_12.wav")):
+            with self.subTest(first=first):
+                paths = [self.audio / first, self.audio / second]
+                for path in paths:
+                    path.write_bytes(self.source.read_bytes())
+                plan = self.plan(paths, RenameOptions(find=r"_1[12]$", use_regex=True))
+                self.assertFalse(plan.can_apply)
+                self.assertTrue(all(row.errors for row in plan.rows))
+
     def test_input_output_overlap_is_forbidden_in_both_directions(self):
         for path in (self.audio, self.audio / "exports", self.root):
             with self.subTest(path=path), self.assertRaises(ValueError):
@@ -132,6 +142,19 @@ class RenameFileTests(unittest.TestCase):
         self.assertFalse(self.plan([link], RenameOptions(prefix="New_")).can_apply)
         nested = self.audio / "nested" / "SFX_Footstep_Concrete_01.wav"
         self.assertFalse(self.plan([nested], RenameOptions(prefix="New_")).can_apply)
+
+    def test_parent_path_aliases_are_normalized_without_accepting_source_symlinks(self):
+        alias = self.root / "parent-alias"
+        try:
+            alias.symlink_to(self.root, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        plan = build_plan(alias / "audio", [alias / "audio" / self.source.name],
+                          alias / "renamed", self.options, Rules())
+        self.assertTrue(plan.can_apply)
+        self.assertEqual(plan.rows[0].source, self.source)
+        self.assertEqual(plan.output_root, self.output)
+        self.assertEqual(execute_plan(plan).copies[0].validation.status, "PASS")
 
     def test_changed_source_or_new_destination_after_preview_blocks_before_writing(self):
         plan = self.plan()
@@ -175,6 +198,51 @@ class RenameFileTests(unittest.TestCase):
         self.assertTrue(outcome.error)
         self.assertFalse((self.output / "SFX_UI_Tap_01.wav").exists())
         self.assertTrue(self.source.exists())
+
+    def test_cancellation_while_writing_removes_the_current_copy(self):
+        cancel = threading.Event()
+        original_open = Path.open
+
+        class CancellingSource:
+            def __init__(self, file):
+                self.file = file
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                self.file.close()
+            def fileno(self):
+                return self.file.fileno()
+            def read(self, size):
+                block = self.file.read(size)
+                cancel.set()
+                return block
+
+        def open_file(path, mode="r", *args, **kwargs):
+            file = original_open(path, mode, *args, **kwargs)
+            return CancellingSource(file) if path == self.source and mode == "rb" else file
+
+        with patch.object(Path, "open", open_file):
+            outcome = execute_plan(self.plan(), cancel)
+        self.assertTrue(outcome.cancelled)
+        self.assertEqual(outcome.copies, ())
+        self.assertFalse((self.output / "SFX_UI_Tap_01.wav").exists())
+        self.assertTrue(self.source.exists())
+
+    def test_destination_created_during_open_is_never_deleted_or_overwritten(self):
+        plan = self.plan()
+        destination = plan.rows[0].destination
+        original_open = Path.open
+
+        def open_file(path, mode="r", *args, **kwargs):
+            if path == destination and mode == "xb":
+                with original_open(path, "wb") as file:
+                    file.write(b"new external file")
+            return original_open(path, mode, *args, **kwargs)
+
+        with patch.object(Path, "open", open_file):
+            outcome = execute_plan(plan)
+        self.assertTrue(outcome.error)
+        self.assertEqual(destination.read_bytes(), b"new external file")
 
     def test_background_worker_emits_copied_and_finished_results(self):
         worker = RenameWorker(self.plan())

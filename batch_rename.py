@@ -153,6 +153,8 @@ def _filename_error(stem: str, name: str) -> str:
 
 
 def _target_error(target: Path, output: Path) -> str:
+    if output.is_symlink() or output.resolve() != output:
+        return "output folder or its parents changed to a symlink; preview again"
     current = output
     for part in target.relative_to(output).parts[:-1]:
         current /= part
@@ -188,6 +190,9 @@ def build_plan(input_root: Path, sources: Sequence[Path], output_root: Path,
     seen_sources: set[Path] = set()
     for item in sources:
         source = item.expanduser().absolute()
+        # Normalize parent aliases (e.g. macOS /var -> /private/var), but leave
+        # the leaf unresolved so source symlinks can still be rejected by lstat.
+        source = source.parent.resolve() / source.name
         relative = source.relative_to(root)  # Paths outside the scanned root are rejected.
         stem = options.rename_stem(source.stem)
         name = stem + source.suffix

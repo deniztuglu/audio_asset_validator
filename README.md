@@ -6,7 +6,8 @@ warnings, and exports a CSV with one row per check. No DAW, middleware installat
 third-party Python packages, or credentials are needed.
 
 **Part 2 desktop interface:** run `python3 gui.py` to choose folders, edit rules,
-save/load project profiles, inspect results, and export CSV reports. See
+save/load project profiles, inspect audio metadata, select multiple assets, preview
+batch filename edits, create renamed copies, and export CSV reports. See
 [the desktop guide and Mac verification checklist](README_PART2.md). The existing
 CLI below remains available; conversion is not implemented.
 
@@ -60,7 +61,8 @@ Typical output:
 The generator refuses to overwrite an existing directory. For another run, specify
 a new directory: `python3 tools/generate_demo.py demo_audio_02`.
 CSV output also refuses to overwrite existing files; use a new report filename
-for each run. The validator never converts, renames, deletes, or rewrites assets.
+for each run. Validation never modifies source assets. The optional desktop batch
+renamer creates copies in a separate folder and leaves original filenames and bytes intact.
 
 ## V1 rules
 
@@ -163,7 +165,7 @@ graphical display; otherwise that test class is explicitly skipped.
 2. Run `python3 --version`. Use Python 3.10 or later (3.12+ recommended). If needed,
    install a current Python 3 release from <https://www.python.org/downloads/macos/>,
    then reopen Terminal. No `pip install` step is needed.
-3. Run `python3 -m unittest discover -s tests -v`. Expect **72 tests** and **OK**
+3. Run `python3 -m unittest discover -s tests -v`. Expect **109 tests** and **OK**
    when Tk and a graphical display are available; see the Part 2 guide for details.
 4. Run the demo commands above. The expected seven error files and one warning file
    are intentional: they demonstrate that problems are detected. Open the report

@@ -27,6 +27,7 @@ class ValidatorApp:
     def __init__(self, root: tk.Tk | tk.Toplevel):
         self.root = root
         self.worker: ScanWorker | None = None
+        self.rename_dialog = None
         self.busy = False
         self.complete = False
         self.stale = False
@@ -153,11 +154,12 @@ class ValidatorApp:
                                  show="headings", selectmode="extended")
         self.tree.heading("status", text="Status")
         self.tree.heading("file", text="File (relative to audio folder)")
-        self.tree.column("status", width=90, stretch=False)
-        self.tree.column("file", width=380, minwidth=150)
+        self.tree.column("status", width=75, stretch=False)
+        self.tree.column("file", width=245, minwidth=140)
+        widths = {"format": 95, "sample_rate": 100, "bit_depth": 80, "channels": 75, "duration": 135}
         for key, label in METADATA:
             self.tree.heading(key, text=label)
-            self.tree.column(key, width=120, minwidth=90, stretch=False)
+            self.tree.column(key, width=widths[key], minwidth=60, stretch=False)
         scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         horizontal = ttk.Scrollbar(list_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
@@ -248,6 +250,9 @@ class ValidatorApp:
                   "These settings validate exports; they do not convert audio.", wraplength=330).pack(anchor="w")
 
     def _naming_controls(self, parent: ttk.Frame) -> None:
+        self.rename_button = ttk.Button(parent, text="Batch Rename...", command=self.open_batch_rename, state="disabled")
+        self.rename_button.pack(fill="x", pady=(0, 4))
+        ttk.Label(parent, text="Select assets in results, then preview renamed copies. Originals stay untouched.", wraplength=330).pack(anchor="w", pady=(0, 12))
         modes = ttk.Frame(parent)
         modes.pack(fill="x", pady=(0, 10))
         for label, mode in (("Naming preset", "preset"), ("Advanced regex", "advanced")):
@@ -470,6 +475,17 @@ class ValidatorApp:
         self.scan_button.configure(state="disabled" if self.busy else "normal")
         self.cancel_button.configure(state="normal" if self.busy else "disabled")
         self.export_button.configure(state="normal" if self.complete and not self.stale and not self.busy else "disabled")
+        self.rename_button.configure(state="normal" if self.complete and not self.stale and not self.busy and self.tree.selection() else "disabled")
+
+    def open_batch_rename(self) -> None:
+        if not self.complete or self.stale or self.busy or not self.tree.selection():
+            return
+        if self.rename_dialog and not self.rename_dialog._closed:
+            self.rename_dialog.window.lift()
+            return
+        from rename_dialog import BatchRenameDialog
+        sources = tuple(self._scan_root / asset.file for asset in self.selected_assets())
+        self.rename_dialog = BatchRenameDialog(self.root, self._scan_root, sources, self._scan_profile.rules)
 
     def choose_folder(self) -> None:
         if self.busy:
@@ -629,6 +645,7 @@ class ValidatorApp:
         self._fill_text(self.overview, selection_overview(assets, self._scan_profile.name))
         self._fill_text(self.metadata, metadata_details(assets))
         self._fill_text(self.details, check_details(assets))
+        self._sync_controls()
 
     def export_csv(self) -> None:
         if not self.complete or self.stale or self.busy:
@@ -648,6 +665,11 @@ class ValidatorApp:
     def close(self) -> None:
         if self._closed:
             return
+        if self.rename_dialog and not self.rename_dialog._closed:
+            if self.rename_dialog.busy:
+                self.rename_dialog.request_close(on_closed=self.close)
+                return
+            self.rename_dialog.request_close()
         if self.dirty and not messagebox.askyesno("Unsaved profile", "Close without saving your profile changes?", parent=self.root):
             return
         self._closed = True
