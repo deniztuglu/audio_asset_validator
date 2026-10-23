@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from batch_rename import FileStamp
+from validator import AssetResult, Check, Rules
 
 
 class BackendError(Exception):
@@ -160,3 +161,22 @@ class ConversionPlan:
     def is_valid(self) -> bool:
         """A valid dry run is not execution approval or a reservation of paths."""
         return bool(self.rows) and not self.errors and not any(row.errors for row in self.rows)
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    output: Path | None
+    checks: tuple[Check, ...]
+    validation_rules: Rules
+    metadata: MediaInfo | None = None
+    validation: AssetResult | None = None
+
+    @property
+    def status(self) -> str:
+        """Incomplete verification never reports PASS; policy results stay separate."""
+        statuses = {check.result for check in self.checks}
+        if self.validation:
+            statuses.add(self.validation.status)
+        if not self.checks or "ERROR" in statuses:
+            return "ERROR"
+        return "WARNING" if "WARNING" in statuses else "PASS"

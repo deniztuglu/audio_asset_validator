@@ -177,3 +177,25 @@ class FFmpegBackend:
         except (ValueError, OverflowError) as error:
             raise BackendError("invalid_response", f"Invalid ffprobe metadata: {error}",
                                diagnostic=result.stdout[:_DIAGNOSTIC_LIMIT]) from error
+
+    def check_decode(self, path: str | Path, stream_index: int) -> None:
+        """Fully decode one audio stream to FFmpeg's null sink. No media is saved."""
+        if type(stream_index) is not int or stream_index < 0:
+            raise ValueError("stream_index must be a nonnegative absolute stream index")
+        executable = self._locate("ffmpeg")
+        source = Path(path).expanduser().absolute()
+        if source.is_symlink() or not source.is_file():
+            raise BackendError("invalid_input", "Choose an existing regular output file.", tool="ffmpeg")
+        try:
+            result = self._run("ffmpeg", executable,
+                               ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode",
+                                "-protocol_whitelist", "file", "-i", str(source),
+                                "-map", f"0:{stream_index}", "-f", "null", "-"])
+        except BackendError as error:
+            if error.code != "command_failed":
+                raise
+            raise BackendError("decode_failed", "FFmpeg could not decode the complete output audio.",
+                               tool="ffmpeg", diagnostic=error.diagnostic, returncode=error.returncode) from error
+        if result.stderr.strip():
+            raise BackendError("decode_failed", "FFmpeg reported errors while decoding output audio.",
+                               tool="ffmpeg", diagnostic=result.stderr[-_DIAGNOSTIC_LIMIT:])

@@ -261,6 +261,35 @@ class BackendTests(unittest.TestCase):
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
                 FFmpegBackend(timeout=timeout)
 
+    def test_decode_checks_use_an_explicit_stream_and_null_sink_without_a_shell(self):
+        original = self.source.read_bytes()
+        self.runner.return_value = completed()
+        self.backend.check_decode(self.source, 3)
+        command = self.runner.call_args.args[0]
+        self.assertEqual(command[-5:], ["-map", "0:3", "-f", "null", "-"])
+        self.assertEqual(command[command.index("-i") + 1], str(self.source))
+        self.assertIn("-xerror", command)
+        self.assertFalse(self.runner.call_args.kwargs["shell"])
+        self.assertEqual(self.source.read_bytes(), original)
+
+    def test_decode_failures_diagnostics_and_timeouts_are_structured(self):
+        self.runner.return_value = completed(stderr="Corrupt frame", returncode=1)
+        self.assert_error("decode_failed", lambda: self.backend.check_decode(self.source, 0))
+        self.runner.return_value = completed(stderr="Corrupt frame", returncode=0)
+        self.assert_error("decode_failed", lambda: self.backend.check_decode(self.source, 0))
+        self.runner.side_effect = subprocess.TimeoutExpired(["ffmpeg"], 15)
+        self.assert_error("timeout", lambda: self.backend.check_decode(self.source, 0))
+        self.finder.side_effect = None
+        self.finder.return_value = None
+        self.assert_error("missing_executable", lambda: self.backend.check_decode(self.source, 0))
+
+    def test_decode_rejects_invalid_stream_indices_and_nonfiles(self):
+        for index in (-1, True, "0"):
+            with self.assertRaises(ValueError):
+                self.backend.check_decode(self.source, index)
+        self.assert_error("invalid_input", lambda: self.backend.check_decode(self.directory, 0))
+        self.runner.assert_not_called()
+
 
 @unittest.skipUnless(shutil.which("ffprobe"), "ffprobe is not installed; backend unit tests still run")
 class BackendIntegrationTests(unittest.TestCase):

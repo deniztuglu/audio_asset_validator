@@ -172,10 +172,10 @@ graphical display; otherwise that test class is explicitly skipped.
 2. Run `python3 --version`. Use Python 3.10 or later (3.12+ recommended). If needed,
    install a current Python 3 release from <https://www.python.org/downloads/macos/>,
    then reopen Terminal. No `pip install` step is needed.
-3. Run `python3 -m unittest discover -s tests -v`. Expect **168 tests** and **OK**
+3. Run `python3 -m unittest discover -s tests -v`. Expect **193 tests** and **OK**
    when Tk and a graphical display are available; see the Part 2 guide for details.
-   Seven integration tests also need ffprobe (two need FFmpeg); missing
-   tools skip those tests, while the backend unit tests still run.
+   Nine integration tests also need ffprobe (three need FFmpeg, one with
+   libmp3lame); missing tools skip those tests, while unit tests still run.
 4. Run the demo commands above. The expected seven error files and one warning file
    are intentional: they demonstrate that problems are detected. Open the report
    with `open reports/demo.csv` to inspect individual checks in your spreadsheet app.
@@ -195,7 +195,7 @@ already ran the demo; the generator and CSV writer deliberately refuse to overwr
 
 ## Optional FFmpeg/ffprobe inspection backend
 
-`conversion/` detects executables, inspects metadata, and builds read-only plans.
+`conversion/` detects executables, inspects metadata, builds read-only plans, and verifies outputs.
 It does not convert files or change the GUI/CLI. Existing validation requires neither
 executable. The optional backend uses tools already on `PATH`, or explicit paths:
 
@@ -250,6 +250,39 @@ symlinks, duplicate/case/Unicode names, and file/directory conflicts block the p
 A future executor must recheck paths/source stamps, require approval, refuse
 overwrites, and verify outputs. Run planning tests with
 `python3 -m unittest discover -s tests -p test_conversion_planning.py -v`.
+
+Postflight inspects an **already existing** planned output. Pass explicit project
+rules; successful target matching does not mean the file meets that project's rules.
+
+```python
+from conversion import verify_output
+from validator import Rules
+
+result = verify_output(plan, 0, Rules.load(Path("profiles/SFX_Default.json")))
+print(result.status, result.checks, result.validation)
+```
+
+For verification before publication, pass `output_path=` pointing to a staged
+file inside the output tree with the planned basename. The verifier leaves both
+the staged file and the final destination untouched.
+
+The result compares container, codec, sample rate, PCM bit depth, channel count/layout,
+and duration with the plan. PCM WAV payloads and project policy are checked by the
+existing validator. MP3 is fully decoded to FFmpeg's null sink; no media is written.
+MP3 VBR quality cannot be proven from ffprobe metadata, and the existing project
+validator does not support MP3, so these checks explicitly report **WARNING**.
+Unavailable layouts/durations also remain warnings; required missing properties,
+target mismatches, empty/corrupt files, unsafe paths, changed source/output stamps,
+and decoder failures report **ERROR**. Failed outputs are left untouched.
+
+PCM duration tolerance defaults to one source/target sample plus 1 microsecond for
+rounding. MP3 allows two 1152-sample frames (at least 50 ms) for encoder delay/padding.
+Set `duration_tolerance_seconds=` to override explicitly. Container duration is an
+estimate when stream duration is missing and is labeled as such. Verification does
+not establish perceptual quality, tag preservation, or byte-identical transformed
+audio. File stamps are observations, not protection against later changes.
+Run focused tests with
+`python3 -m unittest discover -s tests -p test_output_verification.py -v`.
 
 ## Technical decisions and scope
 
