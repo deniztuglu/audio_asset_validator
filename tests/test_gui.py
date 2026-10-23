@@ -162,13 +162,26 @@ class GuiTests(unittest.TestCase):
         self.assertIn(str(dialog.sources[0]), dialog.notes.get("1.0", "end"))
         self.assertNotIn("New_", dialog.notes.get("1.0", "end"))
         self.assertTrue(dialog.apply_button.instate(["disabled"]))
+        self.assertFalse(dialog.replace_advanced.expanded.get())
+        self.assertFalse(dialog.trim_advanced.expanded.get())
+        dialog.variables["find"].set("Click")
+        dialog.variables["use_regex"].set(True)
+        dialog.variables["trim_range"].set(True)
         options = dialog.read_options()
-        dialog.load_preset(3)  # Empty slot selects it without discarding current edits.
-        dialog.save_preset()
+        dialog.preset_selector.set("Preset 3")  # Empty slot keeps current edits.
+        dialog.preset_selector.event_generate("<<ComboboxSelected>>")
+        self.root.update()
+        self.assertEqual(dialog.slot, 3)
+        self.assertIn("Preset 3", dialog.save_preset_button.cget("text"))
+        dialog.save_preset_button.invoke()
         dialog.load_preset(0)
         self.assertEqual(dialog.read_options(), RenameOptions())
+        dialog.replace_advanced.set_expanded(False)
+        dialog.trim_advanced.set_expanded(False)
         dialog.load_preset(3)
         self.assertEqual(dialog.read_options(), options)
+        self.assertTrue(dialog.replace_advanced.expanded.get())
+        self.assertTrue(dialog.trim_advanced.expanded.get())
         self.errors.assert_not_called()
 
     def test_rename_regex_trim_range_and_add_controls_make_the_expected_name(self):
@@ -331,12 +344,15 @@ class GuiTests(unittest.TestCase):
         self.pump_until(lambda: not self.app.busy)
 
     def test_window_close_keeps_interpreter_alive_and_removes_callbacks(self):
+        self.app.open_rules()
+        editor = self.app.rules_window
         interpreter = self.app.root.tk
         poll_id = self.app._poll_id
         traced_variables = [variable for variable, _ in self.app._variable_traces]
         self.app.close()
         self.app.close()  # Closing twice is safe and must not access destroyed widgets.
         self.assertTrue(self.tk_root.winfo_exists())
+        self.assertFalse(editor.winfo_exists())
         self.assertNotIn(poll_id, self.tk_root.tk.call("after", "info"))
         self.assertTrue(all(not variable.trace_info() for variable in traced_variables))
         another_window = tk.Toplevel(self.tk_root)
@@ -393,6 +409,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.app.sample_rate.get(), "96000")
         self.assertIn("96 kHz", self.app.rule_summary.get())
         self.assertIn("Unsaved changes", self.app.active_profile.get())
+        self.assertIn("Unsaved changes", self.app.profile_status.get())
         with patch("gui.filedialog.asksaveasfilename", return_value=str(self.directory / "profile.json")):
             self.app.save_profile()
         self.assertNotIn("Unsaved changes", self.app.active_profile.get())

@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from batch_rename import RenameOptions, RenamePlan, RenamePresetStore, RenameWorker, build_plan
 from result_views import check_details
+from ui_widgets import Disclosure
 from validator import Rules
 
 
@@ -87,16 +88,13 @@ class BatchRenameDialog:
         preview = ttk.Frame(split, padding=(12, 0, 0, 0))
         split.add(options, weight=0)
         split.add(preview, weight=1)
-        presets = ttk.Frame(options)
-        presets.pack(fill="x", pady=(0, 8))
-        ttk.Label(presets, text="Presets:").pack(side="left")
-        for slot in range(1, 6):
-            self._control(ttk.Button(presets, text=str(slot), width=2, command=lambda number=slot: self.load_preset(number))).pack(side="left", padx=1)
+        ttk.Label(options, text="Rename preset").pack(anchor="w", pady=(0, 4))
         combo = self._control(ttk.Combobox(options, textvariable=self.preset_name, state="readonly",
                                           values=("Factory default", *(f"Preset {i}" for i in range(1, 6)))), state="readonly")
+        self.preset_selector = combo
         combo.pack(fill="x", pady=(0, 4))
         combo.bind("<<ComboboxSelected>>", lambda _: self.load_preset(0 if self.preset_name.get() == "Factory default" else int(self.preset_name.get()[-1])))
-        self.save_preset_button = self._control(ttk.Button(options, text="Save current options to slot 1", command=self.save_preset))
+        self.save_preset_button = self._control(ttk.Button(options, text="Save options to Preset 1", command=self.save_preset))
         self.save_preset_button.pack(fill="x", pady=(0, 8))
         scroll_frame = ttk.Frame(options)
         scroll_frame.pack(fill="both", expand=True)
@@ -124,16 +122,22 @@ class BatchRenameDialog:
         self._entry(replace, 1, "Find", "find", lambda: self._flag("replace_enabled") and not self._flag("clear_existing"))
         self._entry(replace, 2, "Replace / new base", "replacement", lambda: self._flag("replace_enabled"))
         self._check(replace, 3, "Clear Existing Name", "clear_existing", lambda: self._flag("replace_enabled"))
-        self._check(replace, 4, "Regular Expressions", "use_regex", lambda: self._flag("replace_enabled") and not self._flag("clear_existing"))
+        self.replace_advanced = Disclosure(replace, "advanced replace options")
+        self.replace_advanced.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self._check(self.replace_advanced.content, 0, "Regular Expressions", "use_regex", lambda: self._flag("replace_enabled") and not self._flag("clear_existing"))
         trim = self._section(form, "Trim", "trim_enabled")
         self._entry(trim, 1, "From Beginning", "trim_begin", lambda: self._flag("trim_enabled"))
         self._entry(trim, 2, "From End", "trim_end", lambda: self._flag("trim_enabled"))
-        self._check(trim, 3, "Range (inclusive, 1-based)", "trim_range", lambda: self._flag("trim_enabled"))
+        self.trim_advanced = Disclosure(trim, "character range options (advanced)")
+        self.trim_advanced.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        range_controls = self.trim_advanced.content
+        range_controls.columnconfigure(1, weight=1)
+        self._check(range_controls, 0, "Remove range (inclusive, starts at 1)", "trim_range", lambda: self._flag("trim_enabled"))
         active = lambda: self._flag("trim_enabled") and self._flag("trim_range")
-        self._entry(trim, 4, "From", "range_start", active)
-        self._entry(trim, 5, "To", "range_end", active)
-        for row, (label, value) in enumerate((("Count From Beginning", False), ("Count From End", True)), 6):
-            self._control(ttk.Radiobutton(trim, text=label, variable=self.variables["range_from_end"], value=value), active).grid(row=row, column=0, columnspan=2, sticky="w", pady=1)
+        self._entry(range_controls, 1, "From", "range_start", active)
+        self._entry(range_controls, 2, "To", "range_end", active)
+        for row, (label, value) in enumerate((("Count From Beginning", False), ("Count From End", True)), 3):
+            self._control(ttk.Radiobutton(range_controls, text=label, variable=self.variables["range_from_end"], value=value), active).grid(row=row, column=0, columnspan=2, sticky="w", pady=1)
         add = self._section(form, "Add", "add_enabled")
         for row, label, flag, text in ((1, "Prefix", "add_prefix", "prefix"), (2, "Insert", "add_insert", "insert"), (4, "Suffix", "add_suffix", "suffix")):
             self._control(ttk.Checkbutton(add, text=label, variable=self.variables[flag]), lambda: self._flag("add_enabled")).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
@@ -232,6 +236,11 @@ class BatchRenameDialog:
         self._show_row()
 
     def _sync(self):
+        # Active advanced operations are always exposed when restoring a preset.
+        if self._flag("use_regex"):
+            self.replace_advanced.set_expanded(True)
+        if self._flag("trim_range"):
+            self.trim_advanced.set_expanded(True)
         for widget, enabled, state in self._controls:
             widget.configure(state=state if not self.busy and enabled() else "disabled")
         self.preview_button.configure(state="disabled" if self.busy else "normal")
@@ -242,12 +251,12 @@ class BatchRenameDialog:
         if self.busy:
             return
         self.slot = slot or 1
-        self.save_preset_button.configure(text=f"Save current options to slot {self.slot}")
+        self.save_preset_button.configure(text=f"Save options to Preset {self.slot}")
         try:
             options = RenameOptions() if slot == 0 else self.store.load().get(str(slot))
             if options is None:
                 self.preset_name.set(f"Preset {slot}")
-                self.status.set(f"Preset {slot} is empty. Edit options and click Save current options to selected slot.")
+                self.status.set(f"Preset {slot} is empty. Your options are kept. Click Save options to Preset {slot} to store them.")
                 return
             self._applying = True
             try:

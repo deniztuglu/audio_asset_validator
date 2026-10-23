@@ -483,6 +483,7 @@ class ValidatorApp:
         finally:
             self._applying = False
         self.dirty = False
+        self.profile_status.set("Profile ready. Save a copy for your project.")
         if profile.naming is None:
             self.naming_advanced.set_expanded(True)
         if self.other_depths.get() or self.other_channels.get() or self.depths[8].get() or self.depths[32].get():
@@ -496,6 +497,7 @@ class ValidatorApp:
         if self._applying:
             return
         self.dirty = True
+        self.profile_status.set("Unsaved changes. Save profile as... to keep them.")
         if self.naming_mode.get() == "advanced":
             self.naming_advanced.set_expanded(True)
         self._invalidate_results()
@@ -598,9 +600,10 @@ class ValidatorApp:
     def load_profile(self) -> None:
         if self.busy:
             return
-        if self.dirty and not messagebox.askyesno("Unsaved profile", "Discard unsaved profile changes and load another profile?", parent=self.root):
+        parent = self.rules_window if self.rules_window.winfo_viewable() else self.root
+        if self.dirty and not messagebox.askyesno("Unsaved profile", "Discard unsaved profile changes and load another profile?", parent=parent):
             return
-        selected = filedialog.askopenfilename(parent=self.root, title="Load project profile",
+        selected = filedialog.askopenfilename(parent=parent, title="Load project profile",
                                               initialdir=Path(__file__).parent / "profiles",
                                               filetypes=[("JSON profiles", "*.json")])
         if not selected:
@@ -610,14 +613,15 @@ class ValidatorApp:
             self.apply_profile(profile)
             self.profile_status.set(f"Loaded: {Path(selected).name}")
         except (OSError, ValueError) as error:
-            messagebox.showerror("Cannot load profile", str(error), parent=self.root)
+            messagebox.showerror("Cannot load profile", str(error), parent=parent)
 
     def save_profile(self) -> None:
         if self.busy:
             return
+        parent = self.rules_window if self.rules_window.winfo_viewable() else self.root
         try:
             profile = self.profile_from_controls()
-            selected = filedialog.asksaveasfilename(parent=self.root, title="Save profile as a new file",
+            selected = filedialog.asksaveasfilename(parent=parent, title="Save profile as a new file",
                                                    defaultextension=".json", initialfile="project-profile.json",
                                                    filetypes=[("JSON profiles", "*.json")], confirmoverwrite=False)
             if not selected:
@@ -629,7 +633,7 @@ class ValidatorApp:
             self.profile_status.set(f"Saved: {destination.name}")
             self._update_title()
         except (OSError, ValueError, RuntimeError) as error:
-            messagebox.showerror("Cannot save profile", str(error), parent=self.root)
+            messagebox.showerror("Cannot save profile", str(error), parent=parent)
 
     def start_scan(self) -> None:
         if self.busy:

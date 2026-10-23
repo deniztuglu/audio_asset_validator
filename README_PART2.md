@@ -10,8 +10,9 @@ application, not yet a packaged, signed, or notarized macOS `.app`.
 ## Start on your Mac
 
 While reviewing this change, fetch in GitHub Desktop and select
-`feature/part2-desktop-gui` under **Current Branch**. The Part 2 changes will not
-appear on `main` until merged. After merging, use `main` normally.
+`feature/ui-simplification` under **Current Branch**. This review branch starts
+from `feature/part2-desktop-gui` and includes all its features. The UI changes will
+not appear on the earlier branch or `main` until merged.
 
 Choose **Repository > Open in Terminal**, then run:
 
@@ -33,6 +34,33 @@ fails, use a current macOS installer from <https://www.python.org/downloads/maco
 and reopen Terminal. Use the same Python interpreter for the Tk check and the app.
 Do not try to fix missing Tk with `pip install tkinter`.
 
+## Simplified workspace
+
+The main window focuses on scanning and inspecting results:
+
+- Choose your **Audio folder** and click **Scan folder** beside it.
+- **Active project profile** summarizes the rules. **Edit rules...** opens a
+  separate editor; **Load profile...** loads an existing JSON profile.
+- The default **Compact** table shows status, relative file path, and the actual
+  issue, for example `Sample rate: 44.1 kHz; expected 48 kHz`. Choose **Full
+  details** for all metadata columns. Both views retain the same data and selection.
+- Click **All files**, **Errors**, **Warnings**, or **Passed** to filter results.
+  Each button shows its file count. Counts cover the whole scan, including while
+  it is running, rather than just the current filter.
+- Select assets, then use **Batch Rename...** beside the selection count.
+  **Export report (all files)...** always exports the whole completed scan.
+- Progress and **Cancel scan** appear while scanning. A prominent notice appears
+  when rules/folder changes require rescanning, or a scan is incomplete.
+
+In the rules editor, **Done** or the window's close button hides the editor.
+Changes apply immediately and remain in memory when reopening it. Saving the
+profile is a separate action. The active profile explicitly shows **Unsaved
+changes** until saved or another profile is loaded.
+
+Advanced controls are expandable. Loading a profile with custom regex or unusual
+audio settings exposes those controls automatically. The naming example and test
+field stay visible while scrolling through naming settings.
+
 ## First scan
 
 Generate the demo once, if you do not already have it:
@@ -46,12 +74,14 @@ a new one with `python3 tools/generate_demo.py demo_audio_02`.
 
 1. Click **Browse...** and select the generated demo folder.
 2. Leave the default profile and rules in place, then click **Scan folder**.
+   Use **Edit rules...** if you want to inspect or customize the rules first.
 3. Expect **10 files: 2 passed, 1 with warnings, 7 with errors** for a clean demo.
-4. Select `SFX_Explosion_03.wav`. The details show expected **48000 Hz**, actual
-   **44100 Hz**, and a suggested next step.
+4. Select `SFX_Explosion_03.wav`. Its Issues column shows actual **44.1 kHz** and
+   expected **48 kHz**. The **Validation checks** tab retains exact Hz values and
+   a suggested next step.
 5. Try the **Errors**, **Warnings**, and **Passed** filters. They filter file-level
    statuses. A file with both an error and warning is listed under Errors.
-6. Click **Export CSV...** and save a new file outside the audio folder. Export
+6. Click **Export report (all files)...** and save a new file outside the audio folder. Export
    always includes the entire completed scan, regardless of the current filter.
 
 The demo contains silent WAVs and deliberately bad exports; the errors demonstrate
@@ -61,8 +91,11 @@ your counts will differ. Directory symlinks are not followed; file symlinks are 
 
 ## Result columns, context tabs, and multiple selection
 
-The asset table includes format, sample rate, bit depth, channel count, and duration
-alongside file and status. Scroll horizontally when needed on smaller windows.
+Choose **Full details** to include format, sample rate, bit depth, channel count,
+and duration alongside file, status, and issues. **Compact** shows the first three
+columns; it does not remove metadata. Scroll horizontally when needed.
+GUI metadata uses concise units such as `48 kHz`, `Mono (1)`, and `0.100 s`.
+The validation-check inspector, CLI, and CSV retain exact engine values.
 These are the actual values from the completed validation checks; unsupported or
 unreadable files show **Not inspected** for metadata the engine could not check.
 
@@ -80,8 +113,8 @@ visible under that filter. Context tabs describe all selected files, not just th
 
 ## Batch Rename: create renamed copies
 
-Complete a scan, select the assets in the result table, then open the **Naming**
-tab and click **Batch Rename...**. The button is enabled for a current, completed
+Complete a scan, select the assets in the result table, then click **Batch Rename...**
+beside the selection count. The button is enabled for a current, completed
 scan with a nonempty selection, in either preset or Advanced regex naming mode.
 The popup takes a snapshot of those selected files and the scan's validation rules.
 
@@ -142,11 +175,15 @@ to the output folder and scan it if you want it in the main results table.
 
 ### Five personal rename presets
 
-Buttons **1–5** and the preset dropdown select slots; **Factory default** resets
+The **Rename preset** dropdown selects **Preset 1–5**; **Factory default** resets
 the options to enabled sections with blank text and zero edge trims (a no-op).
-Selecting an empty slot keeps current edits. Click **Save current options to slot N**
+Selecting an empty slot keeps current edits. Click **Save options to Preset N**
 to persist them. Presets store operations, not source selections or an output path.
 They are separate from validation project profiles.
+Regular expressions are under **Show advanced replace options**. Character-range
+trimming is under **Show character range options (advanced)**. Presets using
+these operations expose the relevant controls automatically. Collapsing a section
+does not turn its operations off; use its checkbox to disable an operation.
 
 On macOS, presets are stored in
 `~/Library/Application Support/Audio Asset Validator/rename_presets.json`.
@@ -161,12 +198,12 @@ file still present under its original name.
 
 ## Edit audio rules
 
-The **Audio rules** tab offers:
+Open **Edit rules... > Audio rules** for:
 
 - Sample rate: choose a common rate or type a positive integer.
-- Bit depths: select one or more allowed depths. Optional extra values are preserved
-  for compatibility with existing project configurations.
-- Channels: select mono/stereo or enter other allowed counts, such as `6, 8`.
+- Bit depths: select 16-bit and/or 24-bit. Expand **Show advanced audio settings**
+  for 8-bit, 32-bit, or other values compatible with existing configurations.
+- Channels: select mono/stereo. Advanced settings allow other counts, such as `6, 8`.
 - Minimum duration: a finite, nonnegative number of seconds. Short audio is a warning;
   zero frames is always an error, even if the minimum is zero.
 
@@ -176,12 +213,13 @@ Scroll within a rules tab to reach controls on smaller displays.
 
 ## Edit naming rules
 
-The **Naming** tab has two explicit modes:
+Open **Edit rules... > Naming rules** for two explicit modes:
 
-**Naming preset** starts with `SFX`, `DX`, and `FLY` choices and lets you add or
+**Build a naming rule** starts with `SFX`, `DX`, and `FLY` choices and lets you add or
 remove your own prefixes. Check one or more allowed prefixes,
 choose flexible/uppercase/lowercase descriptive words, and choose 1–4 variation
-digits. Prefixes remain exactly uppercase; the WAV extension accepts either case.
+digits using **Number suffix digits**, with an example such as `01`.
+Prefixes remain exactly uppercase; the WAV extension accepts either case.
 For example, DX + lowercase + three digits matches `DX_hello_001.wav`.
 The default SFX + flexible + two digits exactly preserves the V1 naming regex.
 
@@ -199,7 +237,8 @@ expressions are rejected. Use Advanced regex for other naming conventions.
 Removing every choice is allowed while editing, but a preset needs at least one
 checked prefix before it can be saved or used to scan.
 
-**Advanced regex** lets you edit the entire filename pattern. Matching uses
+Expand **Show custom naming pattern (advanced)** and select **Use a regular
+expression instead** to edit the entire filename pattern. Matching uses
 `re.fullmatch`, as in V1. This mode supports conventions outside the presets,
 including other prefixes and casing. Enter an ordinary Python regex in the UI,
 for example `VO_[A-Z]+_[0-9]+\.wav`; JSON escaping is handled when saving.
@@ -210,14 +249,16 @@ must be corrected before scanning or saving.
 
 Loading an arbitrary V1/custom regex selects Advanced mode and preserves that
 expression exactly. It is not guessed into dropdown settings. Explicitly switching
-back to Naming preset replaces it with the pattern generated by those controls.
+back to **Build a naming rule** replaces it with the pattern generated by those controls.
 
 ## Save and load profiles
 
-Name your project profile, then use **Save profile as...**. Store it outside the
+In **Edit rules...**, name your project profile, then use **Save profile as...**. Store it outside the
 audio folder and choose a new filename. Existing files are never overwritten.
-Use **Load profile...** to reopen it. Unsaved profile edits are marked with `*` in
-the window title; loading another profile or closing asks before discarding them.
+Use **Load profile...** to reopen it. Unsaved profile edits appear explicitly in
+the active profile card and with `*` in the window title. Loading another profile
+or quitting the application asks before discarding them. Closing only the rules
+editor keeps the edits in memory.
 
 Example profiles are supplied in `profiles/`:
 
@@ -276,9 +317,9 @@ Closing the window requests cancellation; scans do not modify source audio.
 python3 -m unittest discover -s tests -v
 ```
 
-With working Tk and a display, there are **109 tests**: the unchanged 28 V1 tests,
-53 additional configuration/naming/worker/encoding/presentation/rename tests, and
-28 real Tk interaction tests.
+With working Tk and a display, there are **113 tests**: the unchanged 28 V1 tests,
+55 additional configuration/naming/worker/encoding/presentation/rename tests, and
+30 real Tk interaction tests.
 The GUI tests create temporary audio, exercise real widgets and the event loop,
 and stub native file dialogs/message boxes to keep the run noninteractive. They
 keep one Tk interpreter alive for the class and create a separate `Toplevel`
@@ -331,7 +372,7 @@ or the correction verified on a Mac; a native rerun remains necessary.
    If the version is still `3.12.0`, your shell is still selecting the old Python;
    select the newly installed interpreter before retrying.
 3. Run `python3 -m tkinter` and close its test window. Then run
-   `python3 -m unittest discover -s tests -v`. Expect **109 tests** and **OK**;
+   `python3 -m unittest discover -s tests -v`. Expect **113 tests** and **OK**;
    the GUI windows are part of the tests. Wait for the shell prompt to return.
 4. Start the actual application separately with `python3 gui.py`. This command
    remains running until you close the application; it does not print a test summary.
@@ -367,18 +408,24 @@ That is useful isolation, but does not establish GUI readiness.
       format, and naming checks. Unsupported files show unavailable metadata honestly.
 - [ ] Shift-click selects a range; Command-click toggles individual rows; Command-A
       selects all visible rows. Tabs describe every selected asset.
-- [ ] Naming > Batch Rename opens for the selection. Preview Replace, regex, Clear
+- [ ] The results toolbar's Batch Rename opens for the selection. Preview Replace, regex, Clear
       Existing Name, both edge trims, range/origin, prefix, insert/index, and suffix.
 - [ ] Check collisions, extension protection, separate output, original preservation,
       revalidation statuses, cancellation, and closing during a copy on test assets.
 - [ ] Save a rename preset to slot 1–5, close/reopen, and reload it.
+- [ ] Edit rules opens a separate window. Done/close and reopening retain edits;
+      saving clears Unsaved changes. Custom profile controls expand automatically.
+- [ ] Compact/Full details retain selection and metadata; count buttons filter
+      correctly; Issues explains failures directly in the table.
+- [ ] Naming's test field stays visible while scrolling. Advanced controls expand
+      and collapse without changing the configured rules or rename operations.
 - [ ] Export CSV outside the input folder; verify all files/checks are included.
 - [ ] Existing output paths and output inside the audio folder are rejected.
 - [ ] Scan a larger library: window stays responsive; cancellation restores controls
       and leaves export disabled for the partial scan.
 - [ ] Editing rules after a scan disables export until rescanning.
 - [ ] Resize the window; rules remain scrollable and scan/export buttons remain visible.
-- [ ] Automated suite reports 109 passing tests with no GUI skips on the Mac.
+- [ ] Automated suite reports 113 passing tests with no GUI skips on the Mac.
 
 ## Code map
 
@@ -392,6 +439,7 @@ That is useful isolation, but does not establish GUI readiness.
 | `result_views.py` | Metadata columns and multi-asset context text from existing check results |
 | `batch_rename.py` | Filename transforms, collision preview, verified copies, revalidation, worker and presets |
 | `rename_dialog.py` | Batch Rename popup, controls, previews, preset slots, and copy progress |
+| `ui_widgets.py` | Reusable expandable advanced-setting sections |
 
 No third-party audio libraries or conversion backend are introduced. App packaging,
 conversion, auditioning, loudness checks, and category-specific audio rules remain

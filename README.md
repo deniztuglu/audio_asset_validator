@@ -11,6 +11,12 @@ batch filename edits, create renamed copies, and export CSV reports. See
 [the desktop guide and Mac verification checklist](README_PART2.md). The existing
 CLI below remains available; conversion is not implemented.
 
+**UI review branch:** fetch and select `feature/ui-simplification` in GitHub
+Desktop, then run `python3 gui.py`. This branch adds a results-focused workspace,
+an **Edit rules...** window, clear issue summaries, compact/full table views,
+count filters, and simpler rename presets. Follow the updated desktop guide to
+compare the workflow before merging.
+
 ## Quick start
 
 Requires **Python 3.10 or later** on macOS or Linux. Check with `python3 --version`.
@@ -160,12 +166,13 @@ graphical display; otherwise that test class is explicitly skipped.
 ## Verify the project on your Mac
 
 1. In GitHub Desktop, select `audio_asset_validator`, fetch from origin, and select
-   `main`. Pull if GitHub Desktop offers it. Choose **Repository > Open in Terminal**
+   `feature/ui-simplification` for this UI review (use `main` after merging).
+   Pull if GitHub Desktop offers it. Choose **Repository > Open in Terminal**
    so commands run from your local repository directory.
 2. Run `python3 --version`. Use Python 3.10 or later (3.12+ recommended). If needed,
    install a current Python 3 release from <https://www.python.org/downloads/macos/>,
    then reopen Terminal. No `pip install` step is needed.
-3. Run `python3 -m unittest discover -s tests -v`. Expect **109 tests** and **OK**
+3. Run `python3 -m unittest discover -s tests -v`. Expect **113 tests** and **OK**
    when Tk and a graphical display are available; see the Part 2 guide for details.
 4. Run the demo commands above. The expected seven error files and one warning file
    are intentional: they demonstrate that problems are detected. Open the report
