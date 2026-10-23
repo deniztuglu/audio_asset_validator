@@ -35,6 +35,7 @@ class BatchRenameDialog:
         self.input_root, self.sources, self.rules = input_root, sources, rules
         self.store = store or RenamePresetStore(preset_path())
         self.plan: RenamePlan | None = None
+        self._executed_plan: RenamePlan | None = None
         self.worker: RenameWorker | None = None
         self.outcome = None
         self.busy = False
@@ -57,6 +58,7 @@ class BatchRenameDialog:
         self.slot = 1
         self.status = tk.StringVar(master=self.window, value=f"{len(sources)} selected. Choose an output folder, edit options, then preview.")
         self._build()
+        self._show_originals()
         for variable in (*self.variables.values(), self.output):
             self._traces.append((variable, variable.trace_add("write", self._edited)))
         self._sync()
@@ -212,12 +214,22 @@ class BatchRenameDialog:
             return
         self.plan = None
         self._executed_plan = None
-        self.tree.delete(*self.tree.get_children())
-        self.notes.configure(state="normal")
-        self.notes.delete("1.0", "end")
-        self.notes.configure(state="disabled")
+        self._show_originals()
         self.status.set("Settings changed. Preview again before creating copies.")
         self._sync()
+
+    def _show_originals(self):
+        # Keep rows in place so editing preserves selection and scroll position.
+        for index, source in enumerate(self.sources):
+            original = source.relative_to(self.input_root) if source.is_relative_to(self.input_root) else source
+            values = (str(original), "", "Preview required")
+            if self.tree.exists(str(index)):
+                self.tree.item(str(index), values=values)
+            else:
+                self.tree.insert("", "end", iid=str(index), values=values)
+        if not self.tree.selection() and self.sources:
+            self.tree.selection_set("0")
+        self._show_row()
 
     def _sync(self):
         for widget, enabled, state in self._controls:
@@ -269,21 +281,18 @@ class BatchRenameDialog:
         self.plan = None
         self._copied = {}
         self._executed_plan = None
-        self.tree.delete(*self.tree.get_children())
+        self._show_originals()
         try:
             if not self.output.get().strip():
                 raise ValueError("choose a separate output folder first")
             plan = build_plan(self.input_root, self.sources, Path(self.output.get()), self.read_options(), self.rules)
             self.plan = plan
-            self.tree.delete(*self.tree.get_children())
             for index, row in enumerate(plan.rows):
                 target = str(row.destination.relative_to(plan.output_root)) if row.destination.is_relative_to(plan.output_root) else str(row.destination)
-                self.tree.insert("", "end", iid=str(index), values=(str(row.source.relative_to(plan.input_root)), target, row.status))
+                self.tree.item(str(index), values=(str(row.source.relative_to(plan.input_root)), target, row.status))
             blocked = sum(bool(row.errors) for row in plan.rows)
             changed = sum(row.changed for row in plan.rows)
             self.status.set(f"Preview: {changed} changes, {blocked} blocked, {len(plan.rows) - changed} unchanged (skipped). Select rows for details.")
-            if self.tree.get_children():
-                self.tree.selection_set(self.tree.get_children()[0])
             self._show_row()
         except (OSError, ValueError, RuntimeError) as error:
             messagebox.showerror("Cannot preview rename", str(error), parent=self.window)
@@ -295,15 +304,17 @@ class BatchRenameDialog:
             return
         # Keep the last preview inspectable after execution, even though applying it
         # again is disabled until another preview.
-        plan = self.plan or getattr(self, "_executed_plan", None)
-        if plan is None or int(selection[0]) >= len(plan.rows):
-            return
-        row = plan.rows[int(selection[0])]
-        copied = self._copied.get(row.destination)
-        text = f"Original: {row.source}\nOutput: {row.destination}\n{row.status}\n"
-        text += "\n".join((*row.errors, *row.warnings))
-        if copied:
-            text += f"\n\nCopied and SHA-256 verified: {copied.sha256}\n\n{check_details([copied.validation])}"
+        plan = self.plan or self._executed_plan
+        index = int(selection[0])
+        if plan is None:
+            text = f"Original: {self.sources[index]}\n\nChoose an output folder and click Preview names to see the proposed name."
+        else:
+            row = plan.rows[index]
+            copied = self._copied.get(row.destination)
+            text = f"Original: {row.source}\nOutput: {row.destination}\n{row.status}\n"
+            text += "\n".join((*row.errors, *row.warnings))
+            if copied:
+                text += f"\n\nCopied and SHA-256 verified: {copied.sha256}\n\n{check_details([copied.validation])}"
         self.notes.configure(state="normal")
         self.notes.delete("1.0", "end")
         self.notes.insert("1.0", text)

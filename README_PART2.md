@@ -106,6 +106,9 @@ Order is **Replace → Trim ends → Trim range → Prefix → Insert → Suffix
 Operations act on the base name, so `Click.wav` retains `.wav`; do not include an
 extension in the new base unless you intentionally want it as part of that base.
 Scroll the options area to reach controls on smaller displays.
+The preview table shows the selected assets' original relative paths as soon as
+the window opens, and keeps them visible while you edit. Select a row to see its
+full original path below the table. Proposed names appear after **Preview names**.
 
 1. Choose an output folder outside the scanned input folder. It can be an existing
    folder, or type a new folder whose parent exists. An ancestor of the input is

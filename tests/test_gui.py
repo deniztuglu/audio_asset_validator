@@ -97,11 +97,21 @@ class GuiTests(unittest.TestCase):
 
     def test_rename_button_opens_popup_for_only_the_selected_assets(self):
         self.assertTrue(self.app.rename_button.instate(["disabled"]))
-        names = {"SFX_UI_Click_01.wav", "SFX_Explosion_03.wav"}
+        names = {"SFX_UI_Click_01.wav", "nested/SFX_Footstep_Concrete_01.wav"}
         dialog = self.renamer(names)
-        self.assertEqual({source.name for source in dialog.sources}, names)
+        self.assertEqual({str(source.relative_to(self.assets)) for source in dialog.sources}, names)
         self.assertEqual(dialog.read_options(), RenameOptions())
         self.assertIsNotNone(dialog.window.grab_current())
+        rows = dialog.tree.get_children()
+        self.assertEqual({dialog.tree.set(row, "source") for row in rows}, names)
+        self.assertTrue(all(dialog.tree.set(row, "target") == "" for row in rows))
+        self.assertTrue(dialog.apply_button.instate(["disabled"]))
+        dialog.tree.selection_set(rows[-1])
+        self.root.update()
+        self.assertIn(str(dialog.sources[-1]), dialog.notes.get("1.0", "end"))
+        dialog.variables["find"].set("Footstep")
+        self.assertEqual(dialog.tree.selection(), (rows[-1],))
+        self.assertEqual({dialog.tree.set(row, "source") for row in rows}, names)
 
     def test_rename_preview_copy_and_revalidation_preserve_originals(self):
         dialog = self.renamer({"footstep-final.wav", "nested/SFX_Footstep_Concrete_01.wav"})
@@ -135,6 +145,9 @@ class GuiTests(unittest.TestCase):
         dialog.output.set(str(self.assets / "unsafe"))
         dialog.preview()
         self.assertIsNone(dialog.plan)
+        self.assertEqual(len(dialog.tree.get_children()), 2)
+        self.assertTrue(all(dialog.tree.set(row, "target") == "" for row in dialog.tree.get_children()))
+        self.assertTrue(dialog.apply_button.instate(["disabled"]))
         self.errors.assert_called_once()
 
     def test_rename_edit_invalidates_preview_and_presets_restore_every_option(self):
@@ -145,7 +158,10 @@ class GuiTests(unittest.TestCase):
         self.assertIsNotNone(dialog.plan)
         dialog.variables["suffix"].set("_Extra")
         self.assertIsNone(dialog.plan)
-        self.assertEqual(dialog.tree.get_children(), ())
+        self.assertEqual(dialog.tree.item("0", "values"), ("SFX_UI_Click_01.wav", "", "Preview required"))
+        self.assertIn(str(dialog.sources[0]), dialog.notes.get("1.0", "end"))
+        self.assertNotIn("New_", dialog.notes.get("1.0", "end"))
+        self.assertTrue(dialog.apply_button.instate(["disabled"]))
         options = dialog.read_options()
         dialog.load_preset(3)  # Empty slot selects it without discarding current edits.
         dialog.save_preset()
