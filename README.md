@@ -172,9 +172,9 @@ graphical display; otherwise that test class is explicitly skipped.
 2. Run `python3 --version`. Use Python 3.10 or later (3.12+ recommended). If needed,
    install a current Python 3 release from <https://www.python.org/downloads/macos/>,
    then reopen Terminal. No `pip install` step is needed.
-3. Run `python3 -m unittest discover -s tests -v`. Expect **141 tests** and **OK**
+3. Run `python3 -m unittest discover -s tests -v`. Expect **168 tests** and **OK**
    when Tk and a graphical display are available; see the Part 2 guide for details.
-   Six backend integration tests also need ffprobe (two need FFmpeg); missing
+   Seven integration tests also need ffprobe (two need FFmpeg); missing
    tools skip those tests, while the backend unit tests still run.
 4. Run the demo commands above. The expected seven error files and one warning file
    are intentional: they demonstrate that problems are detected. Open the report
@@ -195,8 +195,8 @@ already ran the demo; the generator and CSV writer deliberately refuse to overwr
 
 ## Optional FFmpeg/ffprobe inspection backend
 
-`conversion/` currently detects executables and inspects metadata only. It does
-not convert files or change the GUI/CLI. Existing validation requires neither
+`conversion/` detects executables, inspects metadata, and builds read-only plans.
+It does not convert files or change the GUI/CLI. Existing validation requires neither
 executable. The optional backend uses tools already on `PATH`, or explicit paths:
 
 ```python
@@ -216,6 +216,40 @@ durations remain separate. Successful probing is not full decoding or validation
 `BackendError` exposes a stable `code`, `tool`, `diagnostic`, and optional exit code.
 Run the isolated backend tests with
 `python3 -m unittest discover -s tests -p test_ffmpeg_backend.py -v`.
+
+Dry-run planning has explicit, immutable target settings. Initial output choices
+are WAV integer PCM 16/24-bit and MP3 VBR quality 0–9 (0 is highest). The MP3
+bitstream codec is `mp3`; the selected FFmpeg encoder is `libmp3lame`.
+
+```python
+from pathlib import Path
+from conversion import ConversionSettings, build_plan
+
+settings = ConversionSettings("wav", "pcm_s24le", 48000, bit_depth=24)
+plan = build_plan(Path("/path/to/Audio Exports"), [media.path],
+                  Path("/path/to/Converted"), settings,
+                  probe=backend.inspect, capabilities=tools)
+print(plan.is_valid, plan.errors)
+for row in plan.rows:
+    print(row.source, row.destination, row.operations, row.errors, row.warnings)
+```
+
+Invalid target combinations raise `ValueError` when creating settings. Plans expose
+global and per-file coded `PlanIssue` errors, plus warnings. Channel count/layout,
+filename stems, and relative subfolders are preserved; container changes explicitly
+change the extension. Unsupported layouts are blocked instead of downmixed. Matching
+PCM inputs are planned as copies. No automatic normalization or name repair occurs.
+Unknown layouts, precision reduction/dither decisions, lossy encoding, and unhandled
+non-audio streams are reported explicitly. Multiple audio tracks require a later
+explicit selection; the planner blocks them today. Without optional `capabilities`,
+encoder availability is marked unchecked rather than assumed.
+
+The planner creates no output files/folders. Existing outputs, overlapping trees,
+symlinks, duplicate/case/Unicode names, and file/directory conflicts block the plan.
+`is_valid` means a valid preview, not execution approval or a reserved destination.
+A future executor must recheck paths/source stamps, require approval, refuse
+overwrites, and verify outputs. Run planning tests with
+`python3 -m unittest discover -s tests -p test_conversion_planning.py -v`.
 
 ## Technical decisions and scope
 

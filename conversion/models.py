@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from batch_rename import FileStamp
+
 
 class BackendError(Exception):
     """An actionable backend failure with a stable code and bounded diagnostics."""
@@ -88,3 +90,73 @@ class MediaInfo:
             if type(index) is int and stream.index == index:
                 return stream
         raise BackendError("invalid_audio_stream", f"No audio stream with index {index}.")
+
+
+@dataclass(frozen=True)
+class ConversionSettings:
+    """Explicit target encoding; no remapping, normalization, or renaming options."""
+
+    container: str
+    codec: str
+    sample_rate: int
+    bit_depth: int | None = None
+    quality: int | None = None  # MP3/libmp3lame VBR 0–9, not a generic quality scale.
+    channel_policy: str = "preserve"
+
+    def __post_init__(self):
+        from .formats import validate_settings
+        if not all(type(value) is str for value in (self.container, self.codec, self.channel_policy)):
+            raise ValueError("container, codec, and channel_policy must be strings")
+        validate_settings(self)
+
+    @property
+    def extension(self) -> str:
+        return "." + self.container
+
+    @property
+    def encoder(self) -> str:
+        """Keep the requested bitstream codec distinct from the FFmpeg encoder."""
+        return "libmp3lame" if self.codec == "mp3" else self.codec
+
+
+@dataclass(frozen=True)
+class PlanIssue:
+    code: str
+    message: str
+
+
+@dataclass(frozen=True)
+class PlannedOperation:
+    kind: str
+    before: str | int | None
+    after: str | int | None
+
+
+@dataclass(frozen=True)
+class ConversionRow:
+    source: Path
+    destination: Path | None
+    metadata: MediaInfo | None
+    settings: ConversionSettings
+    source_stamp: FileStamp | None = None
+    stream_index: int | None = None
+    target_channels: int | None = None
+    target_channel_layout: str | None = None
+    operations: tuple[PlannedOperation, ...] = ()
+    errors: tuple[PlanIssue, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConversionPlan:
+    input_root: Path
+    output_root: Path
+    settings: ConversionSettings
+    rows: tuple[ConversionRow, ...]
+    errors: tuple[PlanIssue, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def is_valid(self) -> bool:
+        """A valid dry run is not execution approval or a reservation of paths."""
+        return bool(self.rows) and not self.errors and not any(row.errors for row in self.rows)
