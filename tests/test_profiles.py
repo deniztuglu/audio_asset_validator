@@ -6,7 +6,7 @@ import re
 import tempfile
 import unittest
 
-from naming_rules import NamingPreset
+from naming_rules import NamingPreset, normalize_prefix
 from project_profiles import ProjectProfile
 from validator import DEFAULT_NAMING_PATTERN, Rules
 
@@ -47,9 +47,38 @@ class ProfileTests(unittest.TestCase):
         self.assertIsNotNone(re.fullmatch(pattern, "SFX_Click_01.wav"))
         self.assertIsNone(re.fullmatch(pattern, "FLY_Cloth_01.wav"))
 
+    def test_custom_prefixes_match_literally_and_normalize_editor_input(self):
+        self.assertEqual(normalize_prefix("  vo_en  "), "VO_EN")
+        pattern = NamingPreset(("AMB", "SFX-UI", "VO_EN")).pattern()
+        for filename in ("AMB_Rain_01.wav", "SFX-UI_Click_01.wav", "VO_EN_Hello_01.wav"):
+            self.assertIsNotNone(re.fullmatch(pattern, filename))
+        self.assertIsNone(re.fullmatch(pattern, "SFX_UI_Click_01.wav"))
+
+    def test_invalid_custom_prefixes_and_catalogs_are_rejected(self):
+        for value in ("", " ", "A B", "../SFX", "SFX|DX", "A.*", "A\\B", "_AMB", "AMB_", "1VO", "AMB__UI"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                normalize_prefix(value)
+        base = NamingPreset().to_dict()
+        for values in ({"prefixes": ["amb"]}, {"prefixes": [3]},
+                       {"available_prefixes": ["DX"]}, {"available_prefixes": []},
+                       {"available_prefixes": ["SFX", "SFX"]}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                NamingPreset.from_dict({**base, **values})
+
+    def test_custom_profile_preserves_unchecked_choices_and_removed_defaults(self):
+        naming = NamingPreset(("AMB",), "flexible", 2, ("DX", "AMB", "VO_EN"))
+        profile = ProjectProfile("Ambience", Rules(naming_pattern=naming.pattern()), naming)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ambience.json"
+            profile.save(path)
+            loaded = ProjectProfile.load(path)
+            self.assertEqual(loaded, profile)
+            self.assertEqual(loaded.naming.available_prefixes, ("DX", "AMB", "VO_EN"))
+            self.assertEqual(Rules.load(path), profile.rules)
+
     def test_invalid_presets_are_rejected(self):
         base = NamingPreset().to_dict()
-        for update in ({"prefixes": []}, {"prefixes": ["BAD"]}, {"prefixes": ["SFX", "SFX"]},
+        for update in ({"prefixes": []}, {"prefixes": ["BAD PREFIX"]}, {"prefixes": ["SFX", "SFX"]},
                        {"capitalization": "title"}, {"variation_digits": True},
                        {"variation_digits": 0}, {"variation_digits": 5}):
             with self.subTest(update=update), self.assertRaises(ValueError):

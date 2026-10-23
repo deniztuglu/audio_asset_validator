@@ -77,11 +77,26 @@ Scroll within a rules tab to reach controls on smaller displays.
 
 The **Naming** tab has two explicit modes:
 
-**Naming preset** lets you select one or more `SFX`, `DX`, and `FLY` prefixes,
+**Naming preset** starts with `SFX`, `DX`, and `FLY` choices and lets you add or
+remove your own prefixes. Check one or more allowed prefixes,
 choose flexible/uppercase/lowercase descriptive words, and choose 1–4 variation
 digits. Prefixes remain exactly uppercase; the WAV extension accepts either case.
 For example, DX + lowercase + three digits matches `DX_hello_001.wav`.
 The default SFX + flexible + two digits exactly preserves the V1 naming regex.
+
+To add a prefix, enter it in **Prefix to add or remove** and click **Add** (or
+press Return). For example, `amb` becomes `AMB` and its checkbox is selected.
+Uncheck a prefix to keep it in the editor but disallow it for the next scan.
+To delete a choice, enter its name and click **Remove**. Clicking a checkbox also
+copies its name into the field. Built-in choices can be removed too.
+
+Prefixes are trimmed and converted to uppercase. They must start with a letter
+and can contain letters/numbers, with `_` or `-` between groups: `AMB`, `MUS`,
+`VO_EN`, and `SFX-UI` are valid. Do not add the trailing filename separator `_`;
+the naming builder supplies it. Duplicates, spaces, path separators, and regex
+expressions are rejected. Use Advanced regex for other naming conventions.
+Removing every choice is allowed while editing, but a preset needs at least one
+checked prefix before it can be saved or used to scan.
 
 **Advanced regex** lets you edit the entire filename pattern. Matching uses
 `re.fullmatch`, as in V1. This mode supports conventions outside the presets,
@@ -116,7 +131,11 @@ applies to the entire scanned folder; category-specific audio rules within one
 project remain future work. Selecting multiple prefixes only broadens naming.
 
 The new JSON envelope contains `profile_version: 1`, a `name`, a `rules` object,
-and `naming` preset metadata (or `null` for Advanced mode). The profile schema version
+and `naming` preset metadata (or `null` for Advanced mode). Customized lists also
+save optional `naming.available_prefixes`, so unchecked custom choices and removed
+built-in choices are restored when loading. Older profiles without this field still
+load with the starter choices plus any prefixes already selected by that profile.
+The profile schema version
 is independent of the project phase number. Unknown versions and inconsistent
 preset/regex combinations are rejected rather than silently changed.
 
@@ -156,15 +175,15 @@ Closing the window requests cancellation; scans do not modify source audio.
 python3 -m unittest discover -s tests -v
 ```
 
-With working Tk and a display, there are **63 tests**: the unchanged 28 V1 tests,
-22 additional configuration/naming/worker/encoding tests, and 13 real Tk interaction tests.
+With working Tk and a display, there are **72 tests**: the unchanged 28 V1 tests,
+25 additional configuration/naming/worker/encoding tests, and 19 real Tk interaction tests.
 The GUI tests create temporary audio, exercise real widgets and the event loop,
 and stub native file dialogs/message boxes to keep the run noninteractive. They
 keep one Tk interpreter alive for the class and create a separate `Toplevel`
 window for each test, rather than repeatedly destroying/recreating Tk itself.
 Test windows appearing briefly is expected; no manual interaction is required.
 
-Without a display or Tk installation, the 50 non-GUI tests still run and the GUI
+Without a display or Tk installation, the 53 non-GUI tests still run and the GUI
 class is explicitly skipped. A skipped GUI run does not establish desktop readiness.
 On Linux CI, run the same suite under an Xvfb display when available.
 
@@ -210,7 +229,7 @@ or the correction verified on a Mac; a native rerun remains necessary.
    If the version is still `3.12.0`, your shell is still selecting the old Python;
    select the newly installed interpreter before retrying.
 3. Run `python3 -m tkinter` and close its test window. Then run
-   `python3 -m unittest discover -s tests -v`. Expect **63 tests** and **OK**;
+   `python3 -m unittest discover -s tests -v`. Expect **72 tests** and **OK**;
    the GUI windows are part of the tests. Wait for the shell prompt to return.
 4. Start the actual application separately with `python3 gui.py`. This command
    remains running until you close the application; it does not print a test summary.
@@ -233,6 +252,10 @@ That is useful isolation, but does not establish GUI readiness.
 - [ ] Default demo produces 2 passed / 1 warning / 7 errors (apart from extra files).
 - [ ] Choosing `demo_audio/nested` produces one passing file, matching the CLI.
 - [ ] Naming presets accept SFX/DX/FLY, all three word casing options, and 1–4 digits.
+- [ ] Add `amb` and confirm `AMB` is checked and `AMB_Rain_01.wav` matches in the
+      filename tester. Remove it and confirm it no longer matches. Try `VO_EN` too.
+- [ ] Save/reload a profile with checked and unchecked custom prefixes and a removed
+      starter prefix; all choices and selections are restored. Existing profiles still load.
 - [ ] Filename preview updates immediately; invalid patterns prevent scanning.
 - [ ] Audio rule changes affect results after rescanning, e.g. mono-only flags stereo.
 - [ ] Load the old `config.example.json`; save a new profile; close/reopen and reload
@@ -244,7 +267,7 @@ That is useful isolation, but does not establish GUI readiness.
       and leaves export disabled for the partial scan.
 - [ ] Editing rules after a scan disables export until rescanning.
 - [ ] Resize the window; rules remain scrollable and scan/export buttons remain visible.
-- [ ] Automated suite reports 63 passing tests with no GUI skips on the Mac.
+- [ ] Automated suite reports 72 passing tests with no GUI skips on the Mac.
 
 ## Code map
 

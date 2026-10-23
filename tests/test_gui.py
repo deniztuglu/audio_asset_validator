@@ -90,6 +90,96 @@ class GuiTests(unittest.TestCase):
                                          "DX_HELLO_001.wav"))
         self.assertTrue(self.app.dirty)
 
+    def test_add_remove_custom_prefix_updates_preview_and_selection(self):
+        old_variables = list(self.app.prefixes.values())
+        trace_count = len(self.app._variable_traces)
+        self.app.prefix_text.set(" amb ")
+        self.app.prefix_add_button.invoke()
+        self.assertTrue(all(not variable.trace_info() for variable in old_variables))
+        self.assertEqual(len(self.app._variable_traces), trace_count + 1)
+        self.assertTrue(self.app.prefixes["AMB"].get())
+        self.app.test_filename.set("AMB_Rain_01.wav")
+        self.assertIn("PASS", self.app.preview.get())
+        self.assertTrue(self.app.dirty)
+        self.app.prefix_remove_button.invoke()
+        self.assertEqual(len(self.app._variable_traces), trace_count)
+        self.assertNotIn("AMB", self.app.prefixes)
+        self.assertIn("NO MATCH", self.app.preview.get())
+        self.errors.assert_not_called()
+
+    def test_custom_prefix_catalog_round_trips_through_profile_dialogs(self):
+        for prefix in ("AMB", "VO_EN"):
+            self.app.prefix_text.set(prefix)
+            self.app.add_prefix()
+        self.app.prefixes["VO_EN"].set(False)
+        self.app.prefix_text.set("DX")
+        self.app.remove_prefix()
+        before = self.app.profile_from_controls()
+        path = self.directory / "custom-prefixes.json"
+        with patch("gui.filedialog.asksaveasfilename", return_value=str(path)):
+            self.app.save_profile()
+        self.app.apply_profile(ProjectProfile())
+        with patch("gui.filedialog.askopenfilename", return_value=str(path)):
+            self.app.load_profile()
+        self.assertEqual(self.app.profile_from_controls(), before)
+        self.assertIn("VO_EN", self.app.prefixes)
+        self.assertFalse(self.app.prefixes["VO_EN"].get())
+        self.assertNotIn("DX", self.app.prefixes)
+        self.errors.assert_not_called()
+
+    def test_invalid_duplicate_and_missing_prefix_do_not_modify_choices(self):
+        before = self.app.profile_from_controls()
+        for value in ("", "../AMB", "SFX|DX", "sfx"):
+            self.app.prefix_text.set(value)
+            self.app.add_prefix()
+        self.app.prefix_text.set("MISSING")
+        self.app.remove_prefix()
+        self.assertEqual(self.app.profile_from_controls(), before)
+        self.assertFalse(self.app.dirty)
+        self.assertEqual(self.errors.call_count, 5)
+
+    def test_removing_every_prefix_blocks_scan_until_a_prefix_is_added(self):
+        for prefix in tuple(self.app.prefixes):
+            self.app.prefix_text.set(prefix)
+            self.app.remove_prefix()
+        self.assertEqual(self.app.prefixes, {})
+        self.app.folder.set(str(self.assets))
+        self.app.start_scan()
+        self.assertIsNone(self.app.worker)
+        self.errors.assert_called_once()
+        self.app.prefix_text.set("AMB")
+        self.app.add_prefix()
+        self.assertEqual(self.app.profile_from_controls().naming.prefixes, ("AMB",))
+
+    def test_custom_prefix_validation_uses_engine_and_marks_existing_results_stale(self):
+        self.scan()
+        self.app.prefix_text.set("CUSTOM")
+        self.app.add_prefix()
+        self.assertTrue(self.app.stale)
+        self.assertTrue(self.app.export_button.instate(["disabled"]))
+        custom = self.assets / "CUSTOM_Click_01.wav"
+        custom.write_bytes((self.assets / "SFX_UI_Click_01.wav").read_bytes())
+        self.app.start_scan()
+        self.pump_until(lambda: not self.app.busy)
+        result = next(asset for asset in self.app.results if asset.file == custom.name)
+        self.assertEqual(result.status, "PASS")
+        self.assertFalse(self.app.stale)
+
+    def test_prefix_editor_is_disabled_during_scan_and_in_advanced_mode(self):
+        self.app.naming_mode.set("advanced")
+        self.assertTrue(self.app.prefix_add_button.instate(["disabled"]))
+        self.app.prefix_text.set("AMB")
+        self.app.add_prefix()
+        self.assertNotIn("AMB", self.app.prefixes)
+        self.app.naming_mode.set("preset")
+        self.app.folder.set(str(self.assets))
+        self.app.start_scan()
+        self.assertTrue(self.app.prefix_entry.instate(["disabled"]))
+        self.assertTrue(self.app.prefix_remove_button.instate(["disabled"]))
+        self.app.add_prefix()
+        self.assertNotIn("AMB", self.app.prefixes)
+        self.pump_until(lambda: not self.app.busy)
+
     def test_window_close_keeps_interpreter_alive_and_removes_callbacks(self):
         interpreter = self.app.root.tk
         poll_id = self.app._poll_id

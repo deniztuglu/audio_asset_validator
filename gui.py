@@ -13,7 +13,7 @@ try:
 except ImportError:
     raise SystemExit("Tkinter is unavailable. Install a Python build with Tk support; see README_PART2.md.")
 
-from naming_rules import CASING, PREFIXES, NamingPreset
+from naming_rules import CASING, PREFIXES, NamingPreset, normalize_prefix
 from project_profiles import ProjectProfile
 from scan_worker import ScanWorker, output_destination
 from validator import AssetResult, Rules, write_csv
@@ -47,11 +47,13 @@ class ValidatorApp:
         self.counts = {"PASS": 0, "WARNING": 0, "ERROR": 0}
         self._editable: list[tuple[ttk.Widget, str]] = []
         self._preset_controls: list[ttk.Widget] = []
+        self._prefix_buttons: list[ttk.Widget] = []
         self._rule_canvases: list[tk.Canvas] = []
         self.folder = tk.StringVar(master=root)
         self.profile_name = tk.StringVar(master=root)
         self.naming_mode = tk.StringVar(master=root, value="preset")
-        self.prefixes = {prefix: tk.BooleanVar(master=root) for prefix in PREFIXES}
+        self.prefixes: dict[str, tk.BooleanVar] = {}
+        self.prefix_text = tk.StringVar(master=root)
         self.capitalization = tk.StringVar(master=root)
         self.variation_digits = tk.StringVar(master=root)
         self.regex = tk.StringVar(master=root)
@@ -71,7 +73,7 @@ class ValidatorApp:
         for variable in (self.profile_name, self.naming_mode, self.capitalization,
                          self.variation_digits, self.regex, self.sample_rate,
                          self.other_depths, self.other_channels, self.minimum_duration,
-                         *self.prefixes.values(), *self.depths.values(), *self.channels.values()):
+                         *self.depths.values(), *self.channels.values()):
             self._trace(variable, self._form_changed)
         self._trace(self.folder, self._folder_changed)
         self._trace(self.test_filename, lambda *_: self._update_preview())
@@ -239,12 +241,24 @@ class ValidatorApp:
         for label, mode in (("Naming preset", "preset"), ("Advanced regex", "advanced")):
             self._edit(ttk.Radiobutton(modes, text=label, value=mode, variable=self.naming_mode)).pack(side="left", padx=(0, 10))
         ttk.Label(parent, text="Allowed prefixes (select one or more)").pack(anchor="w")
-        prefixes = ttk.Frame(parent)
-        prefixes.pack(fill="x", pady=(4, 10))
-        for prefix, variable in self.prefixes.items():
-            widget = self._edit(ttk.Checkbutton(prefixes, text=prefix, variable=variable))
-            widget.pack(side="left", padx=(0, 12))
-            self._preset_controls.append(widget)
+        self.prefix_frame = ttk.Frame(parent)
+        self.prefix_frame.pack(fill="x", pady=(4, 8))
+        for column in range(2):
+            self.prefix_frame.columnconfigure(column, weight=1)
+        self._replace_prefixes(PREFIXES, ("SFX",))
+        ttk.Label(parent, text="Prefix to add or remove (e.g. AMB or VO_EN)", wraplength=330).pack(anchor="w")
+        prefix_editor = ttk.Frame(parent)
+        prefix_editor.pack(fill="x", pady=(4, 6))
+        self.prefix_entry = self._edit(ttk.Entry(prefix_editor, textvariable=self.prefix_text, width=12))
+        self.prefix_entry.pack(side="left", fill="x", expand=True)
+        self.prefix_add_button = self._edit(ttk.Button(prefix_editor, text="Add", command=self.add_prefix))
+        self.prefix_add_button.pack(side="left", padx=(6, 4))
+        self.prefix_remove_button = self._edit(ttk.Button(prefix_editor, text="Remove", command=self.remove_prefix))
+        self.prefix_remove_button.pack(side="left")
+        self._preset_controls.extend((self.prefix_entry, self.prefix_add_button, self.prefix_remove_button))
+        self.prefix_entry.bind("<Return>", lambda _: self.add_prefix())
+        ttk.Label(parent, text="Add selects the new prefix. Remove deletes the entered prefix.\n"
+                  "Click a checkbox to copy its name into the field.", wraplength=330).pack(anchor="w", pady=(0, 10))
         for label, variable, values in (("Word casing", self.capitalization, CASING),
                                         ("Variation digits", self.variation_digits, (1, 2, 3, 4))):
             ttk.Label(parent, text=label).pack(anchor="w")
@@ -261,13 +275,74 @@ class ValidatorApp:
         ttk.Entry(parent, textvariable=self.test_filename).pack(fill="x", pady=4)
         ttk.Label(parent, textvariable=self.preview, wraplength=330).pack(anchor="w")
 
+    def _replace_prefixes(self, available, selected) -> None:
+        """Rebuild checkbox choices and retire their old Tcl callbacks on the UI thread."""
+        old_variables = {id(variable) for variable in self.prefixes.values()}
+        for variable, trace_id in self._variable_traces:
+            if id(variable) in old_variables:
+                variable.trace_remove("write", trace_id)
+        self._variable_traces = [(variable, trace_id) for variable, trace_id in self._variable_traces
+                                 if id(variable) not in old_variables]
+        old_buttons = set(self._prefix_buttons)
+        self._editable = [(widget, state) for widget, state in self._editable if widget not in old_buttons]
+        self._preset_controls = [widget for widget in self._preset_controls if widget not in old_buttons]
+        for button in self._prefix_buttons:
+            button.destroy()
+        self._prefix_buttons = []
+        self.prefixes = {}
+        for index, prefix in enumerate(available):
+            variable = tk.BooleanVar(master=self.root, value=prefix in selected)
+            self.prefixes[prefix] = variable
+            self._trace(variable, self._form_changed)
+            button = self._edit(ttk.Checkbutton(self.prefix_frame, text=prefix, variable=variable,
+                                               command=lambda name=prefix: self.prefix_text.set(name)))
+            button.grid(row=index // 2, column=index % 2, sticky="w", padx=(0, 10), pady=2)
+            self._prefix_buttons.append(button)
+            self._preset_controls.append(button)
+
+    def add_prefix(self) -> None:
+        if self.busy or self.naming_mode.get() != "preset":
+            return
+        try:
+            prefix = normalize_prefix(self.prefix_text.get())
+            if prefix in self.prefixes:
+                raise ValueError(f"{prefix} already exists. Check its box to allow it, or enter another prefix.")
+        except ValueError as error:
+            messagebox.showerror("Cannot add prefix", str(error), parent=self.root)
+            return
+        selected = [name for name, variable in self.prefixes.items() if variable.get()]
+        self._replace_prefixes((*self.prefixes, prefix), (*selected, prefix))
+        self.prefix_text.set(prefix)
+        self._form_changed()
+        self.prefix_entry.focus_set()
+        self.prefix_entry.selection_range(0, "end")
+
+    def remove_prefix(self) -> None:
+        if self.busy or self.naming_mode.get() != "preset":
+            return
+        try:
+            prefix = normalize_prefix(self.prefix_text.get())
+            if prefix not in self.prefixes:
+                raise ValueError(f"{prefix} is not in this profile's prefix list.")
+        except ValueError as error:
+            messagebox.showerror("Cannot remove prefix", str(error), parent=self.root)
+            return
+        available = [name for name in self.prefixes if name != prefix]
+        selected = [name for name, variable in self.prefixes.items() if name != prefix and variable.get()]
+        self._replace_prefixes(available, selected)
+        self.prefix_text.set("")
+        self._form_changed()
+
     def _preset(self) -> NamingPreset:
         try:
             digits = int(self.variation_digits.get())
         except ValueError:
             raise ValueError("choose 1-4 variation digits") from None
-        return NamingPreset.from_dict({"prefixes": [p for p, var in self.prefixes.items() if var.get()],
-                                       "capitalization": self.capitalization.get(), "variation_digits": digits})
+        values = {"prefixes": [p for p, var in self.prefixes.items() if var.get()],
+                  "capitalization": self.capitalization.get(), "variation_digits": digits}
+        if tuple(self.prefixes) != PREFIXES:
+            values["available_prefixes"] = list(self.prefixes)
+        return NamingPreset.from_dict(values)
 
     @staticmethod
     def _numbers(text: str) -> list[int]:
@@ -305,8 +380,11 @@ class ValidatorApp:
             self.profile_name.set(profile.name)
             self.naming_mode.set("preset" if profile.naming else "advanced")
             preset = profile.naming or NamingPreset()
-            for prefix, variable in self.prefixes.items():
-                variable.set(prefix in preset.prefixes)
+            available = preset.available_prefixes
+            if available is None:
+                available = tuple(dict.fromkeys((*PREFIXES, *preset.prefixes)))
+            self._replace_prefixes(available, preset.prefixes)
+            self.prefix_text.set("")
             self.capitalization.set(preset.capitalization)
             self.variation_digits.set(str(preset.variation_digits))
             self.regex.set(profile.rules.naming_pattern)
