@@ -317,16 +317,17 @@ Closing the window requests cancellation; scans do not modify source audio.
 python3 -m unittest discover -s tests -v
 ```
 
-With working Tk and a display, there are **113 tests**: the unchanged 28 V1 tests,
-55 additional configuration/naming/worker/encoding/presentation/rename tests, and
-30 real Tk interaction tests.
+With working Tk, a display, FFmpeg, and ffprobe, there are **141 tests**: the unchanged
+28 V1 tests, 55 configuration/naming/worker/encoding/presentation/rename tests,
+30 real Tk interaction tests, and 28 backend tests (including six real-tool tests).
+Missing backend tools skip only the relevant integration tests; unit tests still run.
 The GUI tests create temporary audio, exercise real widgets and the event loop,
 and stub native file dialogs/message boxes to keep the run noninteractive. They
 keep one Tk interpreter alive for the class and create a separate `Toplevel`
 window for each test, rather than repeatedly destroying/recreating Tk itself.
 Test windows appearing briefly is expected; no manual interaction is required.
 
-Without a display or Tk installation, the 81 non-GUI tests still run and the GUI
+Without a display or Tk installation, the 111 non-GUI tests still run and the GUI
 class is explicitly skipped. A skipped GUI run does not establish desktop readiness.
 On Linux CI, run the same suite under an Xvfb display when available.
 
@@ -372,7 +373,8 @@ or the correction verified on a Mac; a native rerun remains necessary.
    If the version is still `3.12.0`, your shell is still selecting the old Python;
    select the newly installed interpreter before retrying.
 3. Run `python3 -m tkinter` and close its test window. Then run
-   `python3 -m unittest discover -s tests -v`. Expect **113 tests** and **OK**;
+   `python3 -m unittest discover -s tests -v`. Expect **141 tests** and **OK**
+   when FFmpeg/ffprobe are also available (otherwise their integration tests skip);
    the GUI windows are part of the tests. Wait for the shell prompt to return.
 4. Start the actual application separately with `python3 gui.py`. This command
    remains running until you close the application; it does not print a test summary.
@@ -425,7 +427,8 @@ That is useful isolation, but does not establish GUI readiness.
       and leaves export disabled for the partial scan.
 - [ ] Editing rules after a scan disables export until rescanning.
 - [ ] Resize the window; rules remain scrollable and scan/export buttons remain visible.
-- [ ] Automated suite reports 113 passing tests with no GUI skips on the Mac.
+- [ ] Automated suite reports 141 passing tests with no skips when Tk and both
+      optional backend tools are available on the Mac.
 
 ## Code map
 

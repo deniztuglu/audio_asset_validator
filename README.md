@@ -172,8 +172,10 @@ graphical display; otherwise that test class is explicitly skipped.
 2. Run `python3 --version`. Use Python 3.10 or later (3.12+ recommended). If needed,
    install a current Python 3 release from <https://www.python.org/downloads/macos/>,
    then reopen Terminal. No `pip install` step is needed.
-3. Run `python3 -m unittest discover -s tests -v`. Expect **113 tests** and **OK**
+3. Run `python3 -m unittest discover -s tests -v`. Expect **141 tests** and **OK**
    when Tk and a graphical display are available; see the Part 2 guide for details.
+   Six backend integration tests also need ffprobe (two need FFmpeg); missing
+   tools skip those tests, while the backend unit tests still run.
 4. Run the demo commands above. The expected seven error files and one warning file
    are intentional: they demonstrate that problems are detected. Open the report
    with `open reports/demo.csv` to inspect individual checks in your spreadsheet app.
@@ -190,6 +192,30 @@ graphical display; otherwise that test class is explicitly skipped.
 Keep only the intended assets in your test folder. A `.DS_Store` or any other non-WAV
 file inside it is also reported as unsupported. Use fresh demo/report paths if you
 already ran the demo; the generator and CSV writer deliberately refuse to overwrite.
+
+## Optional FFmpeg/ffprobe inspection backend
+
+`conversion/` currently detects executables and inspects metadata only. It does
+not convert files or change the GUI/CLI. Existing validation requires neither
+executable. The optional backend uses tools already on `PATH`, or explicit paths:
+
+```python
+from conversion import FFmpegBackend
+
+backend = FFmpegBackend()  # Optional: ffmpeg="/path/to/ffmpeg", ffprobe="/path/to/ffprobe"
+tools = backend.detect()  # Independent availability/version results and encoder list.
+media = backend.inspect("/path/to/Audio Exports/example.wav")
+print(media.container, media.audio_streams)
+audio = media.select_audio_stream()  # Multiple tracks require an explicit stream index.
+```
+
+Unavailable metadata is `None`; numeric zero is preserved. Raw bit-depth fields
+retain ffprobe's zero sentinel, while effective `bit_depth` is `None` when unknown.
+Sample format `s32` alone does not imply 32-bit source audio. Stream and container
+durations remain separate. Successful probing is not full decoding or validation.
+`BackendError` exposes a stable `code`, `tool`, `diagnostic`, and optional exit code.
+Run the isolated backend tests with
+`python3 -m unittest discover -s tests -p test_ffmpeg_backend.py -v`.
 
 ## Technical decisions and scope
 
