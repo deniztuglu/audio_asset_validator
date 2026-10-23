@@ -9,7 +9,8 @@ third-party Python packages, or credentials are needed.
 save/load project profiles, inspect audio metadata, select multiple assets, preview
 batch filename edits, create renamed copies, and export CSV reports. See
 [the desktop guide and Mac verification checklist](README_PART2.md). The existing
-CLI below remains available; conversion is not implemented.
+CLI below remains available. PCM WAV conversion is available through a separate
+headless API; conversion is not connected to the GUI yet.
 
 **UI review branch:** fetch and select `feature/ui-simplification` in GitHub
 Desktop, then run `python3 gui.py`. This branch adds a results-focused workspace,
@@ -166,15 +167,16 @@ graphical display; otherwise that test class is explicitly skipped.
 ## Verify the project on your Mac
 
 1. In GitHub Desktop, select `audio_asset_validator`, fetch from origin, and select
-   `feature/ui-simplification` for this UI review (use `main` after merging).
+   the branch being reviewed (`feature/pcm-conversion` for the current headless
+   converter; `feature/ui-simplification` for the earlier GUI baseline).
    Pull if GitHub Desktop offers it. Choose **Repository > Open in Terminal**
    so commands run from your local repository directory.
 2. Run `python3 --version`. Use Python 3.10 or later (3.12+ recommended). If needed,
    install a current Python 3 release from <https://www.python.org/downloads/macos/>,
    then reopen Terminal. No `pip install` step is needed.
-3. Run `python3 -m unittest discover -s tests -v`. Expect **193 tests** and **OK**
+3. Run `python3 -m unittest discover -s tests -v`. Expect **214 tests** and **OK**
    when Tk and a graphical display are available; see the Part 2 guide for details.
-   Nine integration tests also need ffprobe (three need FFmpeg, one with
+   Fifteen integration tests also need ffprobe (nine need FFmpeg, one with
    libmp3lame); missing tools skip those tests, while unit tests still run.
 4. Run the demo commands above. The expected seven error files and one warning file
    are intentional: they demonstrate that problems are detected. Open the report
@@ -195,8 +197,9 @@ already ran the demo; the generator and CSV writer deliberately refuse to overwr
 
 ## Optional FFmpeg/ffprobe inspection backend
 
-`conversion/` detects executables, inspects metadata, builds read-only plans, and verifies outputs.
-It does not convert files or change the GUI/CLI. Existing validation requires neither
+`conversion/` detects executables, inspects metadata, builds read-only plans,
+verifies outputs, and explicitly executes PCM WAV plans. The GUI and CLI validation
+behavior remain unchanged. Existing validation requires neither
 executable. The optional backend uses tools already on `PATH`, or explicit paths:
 
 ```python
@@ -247,8 +250,8 @@ encoder availability is marked unchecked rather than assumed.
 The planner creates no output files/folders. Existing outputs, overlapping trees,
 symlinks, duplicate/case/Unicode names, and file/directory conflicts block the plan.
 `is_valid` means a valid preview, not execution approval or a reserved destination.
-A future executor must recheck paths/source stamps, require approval, refuse
-overwrites, and verify outputs. Run planning tests with
+The executor rechecks paths/source stamps, refuses overwrites, and verifies
+outputs. Call it explicitly only after reviewing the plan. Run planning tests with
 `python3 -m unittest discover -s tests -p test_conversion_planning.py -v`.
 
 Postflight inspects an **already existing** planned output. Pass explicit project
@@ -283,6 +286,63 @@ not establish perceptual quality, tag preservation, or byte-identical transforme
 audio. File stamps are observations, not protection against later changes.
 Run focused tests with
 `python3 -m unittest discover -s tests -p test_output_verification.py -v`.
+
+## Headless PCM WAV conversion
+
+The current executor supports mono/stereo integer PCM WAV sources and preserves
+their channel count. Targets are 16/24-bit PCM WAV at **22050, 32000, 44100, 48000,
+or 96000 Hz**. MP3 remains inspection/planning/verification only.
+
+```python
+from pathlib import Path
+from conversion import ConversionSettings, FFmpegBackend, build_plan, execute_plan
+from validator import Rules
+
+backend = FFmpegBackend()
+audio = Path("/path/to/Audio Exports")
+settings = ConversionSettings("wav", "pcm_s24le", 48000, bit_depth=24,
+                              resampling_quality="default", metadata_policy="copy")
+plan = build_plan(audio, [audio / "SFX_Test_01.wav"], Path("/path/to/Converted"),
+                  settings, probe=backend.inspect, capabilities=backend.detect())
+# Review plan.rows, plan.errors, and plan.warnings before explicitly executing.
+outcome = execute_plan(plan, Rules(sample_rate=48000))
+print(outcome.outputs, outcome.cancelled, outcome.errors)
+```
+
+Calling `execute_plan` explicitly approves the plan's chosen destination/settings;
+the planner never executes automatically. Pass project rules compatible with the
+target. Old or blocked plans are rejected, and source PCM payloads are fully checked.
+Matching inputs are byte-identical copies, unless an explicit processing/metadata
+choice requests re-encoding.
+
+`resampling_quality` selects built-in **SWResample**, without an optional SoXR
+dependency: `default` uses FFmpeg defaults; `fast` uses a 16-tap filter, phase shift
+8, cutoff 0.90; `high` uses 64 taps, phase shift 10, cutoff 0.97. No normalization
+or channel remixing is applied. When reducing bit depth, explicitly choose
+`dither="none"` or `dither="triangular"` before building the plan. Dither is applied
+at the target 16/24-bit precision, not the internal 32-bit sample container.
+`metadata_policy="copy"` copies supported tags; arbitrary RIFF/BWF chunks are not
+guaranteed to survive FFmpeg re-encoding. `"strip"` explicitly disables tag copying.
+
+Each job writes to a private temporary directory under its output parent. ffprobe
+and the unchanged PCM validator check actual codec, rate, bit depth, channels,
+complete frames, and duration (one source/target sample plus 1 microsecond).
+All required checks must pass before publication. WAV layout omissions and project
+warnings stay visible in the returned verification result; nonstandard layouts
+are rejected. The verified bytes are published through an atomic hard link that
+cannot replace an existing path. **The output filesystem must support hard links**;
+unsupported filesystems fail without an overwrite fallback.
+
+Use a `threading.Event` as `cancel=`. FFmpeg is polled every 50 ms and terminated,
+then killed if necessary; a probe/validation already running finishes first.
+`timeout_seconds=` defaults to 300 per conversion. On failure/cancellation the
+private temporary output is removed; already completed outputs remain. Empty
+output folders may remain. `on_converted=` optionally receives each completed file.
+Returned outputs include their verification and the exact FFmpeg command (empty
+for copies). Originals and existing destinations are never rewritten.
+
+Run focused tests with
+`python3 -m unittest discover -s tests -p test_conversion_execution.py -v`.
 
 ## Technical decisions and scope
 

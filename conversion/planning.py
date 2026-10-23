@@ -1,7 +1,7 @@
 """Read-only conversion previews. No commands, output files, or directories created.
 
-Paths and source stamps are observations, not reservations. A future executor
-must recheck them, obtain destination/plan approval, and exclusively publish output.
+Paths and source stamps are observations, not reservations. The executor must
+recheck them, obtain destination/plan approval, and exclusively publish output.
 """
 
 from collections import defaultdict
@@ -86,6 +86,8 @@ def _encoding_operations(media: MediaInfo, stream: AudioStream, settings: Conver
         operations.append(PlannedOperation("container", media.container, settings.container))
     if stream.sample_rate != settings.sample_rate:
         operations.append(PlannedOperation("resample", stream.sample_rate, settings.sample_rate))
+        if settings.container == "wav":
+            operations.append(PlannedOperation("resampling_quality", None, settings.resampling_quality))
     if settings.container == "wav":
         if stream.codec != settings.codec:
             operations.append(PlannedOperation("encode", stream.codec, settings.codec))
@@ -94,7 +96,14 @@ def _encoding_operations(media: MediaInfo, stream: AudioStream, settings: Conver
         if stream.bit_depth is None:
             warnings.append("Source bit depth is unavailable; precision changes cannot be fully assessed.")
         elif stream.bit_depth > settings.bit_depth:
-            warnings.append("Bit depth will be reduced; a dither policy must be chosen before execution.")
+            warnings.append("Bit depth will be reduced; " + ("a dither policy must be chosen before execution."
+                            if settings.dither is None else f"dither policy: {settings.dither}."))
+        if settings.dither is not None and (settings.dither != "none" or (stream.bit_depth and stream.bit_depth > settings.bit_depth)):
+            operations.append(PlannedOperation("dither", None, settings.dither))
+    if settings.metadata_policy == "strip":
+        operations.append(PlannedOperation("metadata", None, "strip"))
+    elif operations:
+        warnings.append("FFmpeg copies supported metadata tags; arbitrary RIFF/BWF chunks are not guaranteed to survive re-encoding.")
     if media.non_audio_stream_indices:
         warnings.append("Non-audio streams are present; their handling must be explicitly decided before execution.")
     return operations, warnings, errors

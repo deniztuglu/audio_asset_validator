@@ -317,11 +317,11 @@ Closing the window requests cancellation; scans do not modify source audio.
 python3 -m unittest discover -s tests -v
 ```
 
-With working Tk, a display, FFmpeg (with libmp3lame), and ffprobe, there are **193 tests**: the unchanged
+With working Tk, a display, FFmpeg (with libmp3lame), and ffprobe, there are **214 tests**: the unchanged
 28 V1 tests, 55 configuration/naming/worker/encoding/presentation/rename tests,
 30 real Tk interaction tests, 31 backend tests (including six real-tool tests),
 27 settings/planning tests (including one real-probe test), and 22 output-verification
-tests (including two real-tool tests).
+tests (including two real-tool tests), plus 21 execution tests (six real-tool tests).
 Missing backend tools skip only the relevant integration tests; unit tests still run.
 The GUI tests create temporary audio, exercise real widgets and the event loop,
 and stub native file dialogs/message boxes to keep the run noninteractive. They
@@ -329,7 +329,7 @@ keep one Tk interpreter alive for the class and create a separate `Toplevel`
 window for each test, rather than repeatedly destroying/recreating Tk itself.
 Test windows appearing briefly is expected; no manual interaction is required.
 
-Without a display or Tk installation, the 163 non-GUI tests still run and the GUI
+Without a display or Tk installation, the 184 non-GUI tests still run and the GUI
 class is explicitly skipped. A skipped GUI run does not establish desktop readiness.
 On Linux CI, run the same suite under an Xvfb display when available.
 
@@ -375,7 +375,7 @@ or the correction verified on a Mac; a native rerun remains necessary.
    If the version is still `3.12.0`, your shell is still selecting the old Python;
    select the newly installed interpreter before retrying.
 3. Run `python3 -m tkinter` and close its test window. Then run
-   `python3 -m unittest discover -s tests -v`. Expect **193 tests** and **OK**
+   `python3 -m unittest discover -s tests -v`. Expect **214 tests** and **OK**
    when FFmpeg/ffprobe are also available (otherwise their integration tests skip);
    the GUI windows are part of the tests. Wait for the shell prompt to return.
 4. Start the actual application separately with `python3 gui.py`. This command
@@ -429,7 +429,7 @@ That is useful isolation, but does not establish GUI readiness.
       and leaves export disabled for the partial scan.
 - [ ] Editing rules after a scan disables export until rescanning.
 - [ ] Resize the window; rules remain scrollable and scan/export buttons remain visible.
-- [ ] Automated suite reports 193 passing tests with no skips when Tk and both
+- [ ] Automated suite reports 214 passing tests with no skips when Tk and both
       optional backend tools (FFmpeg with libmp3lame) are available on the Mac.
 
 ## Code map
@@ -446,7 +446,7 @@ That is useful isolation, but does not establish GUI readiness.
 | `rename_dialog.py` | Batch Rename popup, controls, previews, preset slots, and copy progress |
 | `ui_widgets.py` | Reusable expandable advanced-setting sections |
 
-The separate `conversion/` backend supports inspection, read-only plans, and output verification;
-it is not connected to this GUI and cannot write converted audio. App packaging,
-conversion, auditioning, loudness checks, and category-specific audio rules remain
-outside this implementation.
+The separate `conversion/` backend supports inspection, read-only plans, output
+verification, and explicit headless PCM WAV execution. It is not connected to this
+GUI. App packaging, GUI conversion controls, auditioning, loudness checks, and
+category-specific audio rules remain outside this interface.

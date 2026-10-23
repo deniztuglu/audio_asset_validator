@@ -103,6 +103,9 @@ class ConversionSettings:
     bit_depth: int | None = None
     quality: int | None = None  # MP3/libmp3lame VBR 0–9, not a generic quality scale.
     channel_policy: str = "preserve"
+    resampling_quality: str = "default"  # FFmpeg SWResample; fast/high are explicit alternatives.
+    dither: str | None = None  # A reduction requires an explicit none/triangular choice.
+    metadata_policy: str = "copy"  # Copy supported tags or explicitly strip them.
 
     def __post_init__(self):
         from .formats import validate_settings
@@ -180,3 +183,19 @@ class VerificationResult:
         if not self.checks or "ERROR" in statuses:
             return "ERROR"
         return "WARNING" if "WARNING" in statuses else "PASS"
+
+
+@dataclass(frozen=True)
+class ConvertedOutput:
+    source: Path
+    destination: Path
+    verification: VerificationResult
+    command: tuple[str, ...] = ()  # Empty for a byte-identical copy.
+
+
+@dataclass(frozen=True)
+class ConversionOutcome:
+    outputs: tuple[ConvertedOutput, ...] = ()
+    cancelled: bool = False
+    errors: tuple[PlanIssue, ...] = ()
+    failed_verification: VerificationResult | None = None

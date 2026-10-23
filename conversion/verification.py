@@ -27,7 +27,7 @@ def verify_output(plan: ConversionPlan, row_index: int, rules: Rules, *,
     encoder delay/padding. An explicit finite nonnegative tolerance can override.
     Missing layout/duration and unprovable VBR quality yield WARNING, never PASS.
     output_path can select an existing staged file under the output tree with the
-    planned basename. A future executor must exclusively publish verified output
+    planned basename. The executor must exclusively publish verified output
     and recheck these snapshots. The verifier never creates or deletes a file.
     """
     if type(row_index) is not int or not 0 <= row_index < len(plan.rows):

@@ -11,6 +11,12 @@ def validate_settings(settings) -> None:
         raise ValueError("sample_rate must be a positive 32-bit integer in Hz")
     if settings.channel_policy != "preserve":
         raise ValueError("only the preserve channel policy is supported; no downmixing is planned")
+    if settings.resampling_quality not in ("default", "fast", "high"):
+        raise ValueError("resampling_quality must be default, fast, or high")
+    if settings.dither not in (None, "none", "triangular"):
+        raise ValueError("dither must be unset, none, or triangular")
+    if settings.metadata_policy not in ("copy", "strip"):
+        raise ValueError("metadata_policy must be copy or strip")
     if settings.container == "wav":
         if settings.codec not in PCM_CODECS:
             raise ValueError("WAV targets support pcm_s16le and pcm_s24le only")
@@ -19,6 +25,8 @@ def validate_settings(settings) -> None:
         if settings.quality is not None:
             raise ValueError("PCM targets do not accept lossy encoding quality")
     elif settings.container == "mp3":
+        if settings.dither is not None or settings.resampling_quality != "default":
+            raise ValueError("PCM dither/resampling options are not supported for MP3 plans")
         if settings.codec != "mp3":
             raise ValueError("MP3 targets require codec mp3 (encoded by libmp3lame)")
         if settings.bit_depth is not None:
