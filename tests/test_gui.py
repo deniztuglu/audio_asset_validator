@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+import weakref
 from unittest.mock import patch
 
 try:
@@ -112,6 +113,11 @@ class GuiTests(unittest.TestCase):
         dialog.variables["find"].set("Footstep")
         self.assertEqual(dialog.tree.selection(), (rows[-1],))
         self.assertEqual({dialog.tree.set(row, "source") for row in rows}, names)
+        disclosure_variables = [weakref.ref(section.expanded)
+                                for section in (dialog.replace_advanced, dialog.trim_advanced)]
+        dialog.request_close()
+        self.assertTrue(all(variable() is None for variable in disclosure_variables))
+        self.assertEqual(dialog._controls, [])
 
     def test_rename_preview_copy_and_revalidation_preserve_originals(self):
         dialog = self.renamer({"footstep-final.wav", "nested/SFX_Footstep_Concrete_01.wav"})
@@ -237,6 +243,7 @@ class GuiTests(unittest.TestCase):
         dialog.worker.join(timeout=3)
         self.assertFalse(dialog.worker.is_alive())
         self.assertTrue(dialog.outcome.cancelled)
+        self.assertIsNone(dialog._close_callback)
         self.assertTrue((self.assets / "SFX_UI_Click_01.wav").exists())
 
     def test_initial_defaults_and_live_preset_controls(self):
@@ -346,6 +353,8 @@ class GuiTests(unittest.TestCase):
     def test_window_close_keeps_interpreter_alive_and_removes_callbacks(self):
         self.app.open_rules()
         editor = self.app.rules_window
+        disclosure_variables = [weakref.ref(section.expanded)
+                                for section in (self.app.audio_advanced, self.app.naming_advanced)]
         interpreter = self.app.root.tk
         poll_id = self.app._poll_id
         traced_variables = [variable for variable, _ in self.app._variable_traces]
@@ -353,6 +362,7 @@ class GuiTests(unittest.TestCase):
         self.app.close()  # Closing twice is safe and must not access destroyed widgets.
         self.assertTrue(self.tk_root.winfo_exists())
         self.assertFalse(editor.winfo_exists())
+        self.assertTrue(all(variable() is None for variable in disclosure_variables))
         self.assertNotIn(poll_id, self.tk_root.tk.call("after", "info"))
         self.assertTrue(all(not variable.trace_info() for variable in traced_variables))
         another_window = tk.Toplevel(self.tk_root)

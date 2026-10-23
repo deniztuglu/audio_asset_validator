@@ -403,7 +403,10 @@ class BatchRenameDialog:
         self.window.after_cancel(self._poll_id)
         for variable, callback in self._traces:
             variable.trace_remove("write", callback)
+        self._traces.clear()
+        self._controls.clear()
         self.window.grab_release()
         self.window.destroy()
-        if self._close_callback:
-            self._close_callback()
+        callback, self._close_callback = self._close_callback, None
+        if callback:
+            callback()

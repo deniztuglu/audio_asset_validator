@@ -24,3 +24,9 @@ class Disclosure(ttk.Frame):
             self.content.pack(fill="x")
         else:
             self.content.pack_forget()
+
+    def destroy(self):
+        super().destroy()
+        # Child widgets refer back to their master. Release our extra references
+        # and Tcl variable on the UI thread, before a worker can collect cycles.
+        self.toggle = self.content = self.expanded = None
