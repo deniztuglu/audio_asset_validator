@@ -15,18 +15,11 @@ except ImportError:
 
 from naming_rules import CASING, PREFIXES, NamingPreset, normalize_prefix
 from project_profiles import ProjectProfile
+from result_views import METADATA, check_details, metadata_details, metadata_values, selection_overview
 from scan_worker import ScanWorker, output_destination
 from validator import AssetResult, Rules, write_csv
 
 
-FIX_HINTS = {
-    "naming": "Rename or re-export in your asset workflow to match the naming rule.",
-    "format": "Re-export from the source as an uncompressed integer PCM WAV; check that the export completed.",
-    "sample_rate": "Re-export at the expected sample rate, or adjust the project rule if this rate is intentional.",
-    "bit_depth": "Re-export at an allowed integer PCM bit depth, or adjust the project rule.",
-    "channels": "Choose an allowed channel layout in your source/export workflow, or adjust the project rule.",
-    "duration": "Check the export range. Empty exports need correction; short sounds may be intentional.",
-}
 FILTERS = {"All files": None, "Errors": "ERROR", "Warnings": "WARNING", "Passed": "PASS"}
 
 
@@ -69,6 +62,7 @@ class ValidatorApp:
         self.summary = tk.StringVar(master=root, value="Choose an audio folder, review the rules, then scan.")
         self.profile_status = tk.StringVar(master=root, value="Default profile : save a copy for your project.")
         self.result_filter = tk.StringVar(master=root, value="All files")
+        self.selection_note = tk.StringVar(master=root, value="No assets selected")
         self._build_window()
         for variable in (self.profile_name, self.naming_mode, self.capitalization,
                          self.variation_digits, self.regex, self.sample_rate,
@@ -85,6 +79,7 @@ class ValidatorApp:
         self.root.bind(f"<{modifier}-o>", lambda _: self.load_profile())
         self.root.bind(f"<{modifier}-s>", lambda _: self.save_profile())
         self.root.bind(f"<{modifier}-r>", lambda _: self.start_scan())
+        self.tree.bind(f"<{modifier}-a>", self._select_all)
         self._poll_id = self.root.after(40, self._poll)
 
     def _trace(self, variable: tk.Variable, callback) -> None:
@@ -145,17 +140,24 @@ class ValidatorApp:
                                 width=12, state="readonly")
         selector.pack(side="right")
         selector.bind("<<ComboboxSelected>>", lambda _: self._refresh_results())
+        ttk.Label(results, textvariable=self.selection_note).pack(anchor="w")
+        toggle = "Command" if sys.platform == "darwin" else "Ctrl"
+        ttk.Label(results, text=f"Shift-click selects a range; {toggle}-click toggles assets.").pack(anchor="w", pady=(0, 6))
         split = ttk.Panedwindow(results, orient="vertical")
         split.pack(fill="both", expand=True)
         list_frame = ttk.Frame(split)
-        detail_frame = ttk.LabelFrame(split, text="Selected file : checks and next steps", padding=8)
+        detail_frame = ttk.Frame(split)
         split.add(list_frame, weight=3)
         split.add(detail_frame, weight=2)
-        self.tree = ttk.Treeview(list_frame, columns=("status", "file"), show="headings", selectmode="browse")
+        self.tree = ttk.Treeview(list_frame, columns=("status", "file", *(key for key, _ in METADATA)),
+                                 show="headings", selectmode="extended")
         self.tree.heading("status", text="Status")
         self.tree.heading("file", text="File (relative to audio folder)")
         self.tree.column("status", width=90, stretch=False)
         self.tree.column("file", width=380, minwidth=150)
+        for key, label in METADATA:
+            self.tree.heading(key, text=label)
+            self.tree.column(key, width=120, minwidth=90, stretch=False)
         scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         horizontal = ttk.Scrollbar(list_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
@@ -165,12 +167,11 @@ class ValidatorApp:
         list_frame.rowconfigure(0, weight=1)
         list_frame.columnconfigure(0, weight=1)
         self.tree.bind("<<TreeviewSelect>>", lambda _: self._show_details())
-        self.details = tk.Text(detail_frame, wrap="word", height=10, width=50, state="disabled",
-                               font="TkDefaultFont", padx=6, pady=6)
-        detail_scroll = ttk.Scrollbar(detail_frame, command=self.details.yview)
-        self.details.configure(yscrollcommand=detail_scroll.set)
-        self.details.pack(side="left", fill="both", expand=True)
-        detail_scroll.pack(side="right", fill="y")
+        self.context_tabs = ttk.Notebook(detail_frame)
+        self.context_tabs.pack(fill="both", expand=True)
+        self.overview = self._context_tab("Overview")
+        self.metadata = self._context_tab("Audio metadata")
+        self.details = self._context_tab("Validation checks")
         summary_label = ttk.Label(container, textvariable=self.summary, wraplength=1100)
         summary_label.grid(row=4, column=0, sticky="w")
         container.bind("<Configure>", lambda event: summary_label.configure(wraplength=max(200, event.width)))
@@ -184,6 +185,17 @@ class ValidatorApp:
         self.cancel_button.pack(side="left", padx=8)
         self.export_button = ttk.Button(footer, text="Export CSV...", command=self.export_csv, state="disabled")
         self.export_button.pack(side="left")
+
+    def _context_tab(self, title: str) -> tk.Text:
+        frame = ttk.Frame(self.context_tabs)
+        self.context_tabs.add(frame, text=title)
+        text = tk.Text(frame, wrap="word", height=10, width=50, state="disabled",
+                       font="TkDefaultFont", padx=6, pady=6)
+        scroll = ttk.Scrollbar(frame, command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        text.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        return text
 
     def _scrollable_tab(self, notebook: ttk.Notebook, title: str) -> ttk.Frame:
         tab = ttk.Frame(notebook)
@@ -578,37 +590,45 @@ class ValidatorApp:
     def _insert_asset(self, index: int, asset: AssetResult) -> None:
         wanted = FILTERS[self.result_filter.get()]
         if wanted is None or asset.status == wanted:
-            self.tree.insert("", "end", iid=str(index), values=(asset.status, asset.file))
+            self.tree.insert("", "end", iid=str(index), values=(asset.status, asset.file, *metadata_values(asset)))
 
     def _refresh_results(self) -> None:
+        selected = set(self.tree.selection())
         self.tree.delete(*self.tree.get_children())
         self._set_details("")
         for index, asset in enumerate(self.results):
             self._insert_asset(index, asset)
-        if self.tree.get_children():
-            self.tree.selection_set(self.tree.get_children()[0])
+        visible = self.tree.get_children()
+        retained = [item for item in visible if item in selected]
+        if retained or visible:
+            self.tree.selection_set(retained or [visible[0]])
+        self._show_details()
 
     def _set_details(self, text: str) -> None:
-        self.details.configure(state="normal")
-        self.details.delete("1.0", "end")
-        self.details.insert("1.0", text)
-        self.details.configure(state="disabled")
+        for widget in (self.details, self.overview, self.metadata):
+            self._fill_text(widget, text)
+
+    @staticmethod
+    def _fill_text(widget: tk.Text, text: str) -> None:
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", text)
+        widget.configure(state="disabled")
+
+    def selected_assets(self) -> list[AssetResult]:
+        return [self.results[int(item)] for item in sorted(self.tree.selection(), key=int)]
+
+    def _select_all(self, _event=None) -> str:
+        self.tree.selection_set(self.tree.get_children())
+        self._show_details()
+        return "break"
 
     def _show_details(self) -> None:
-        selection = self.tree.selection()
-        if not selection:
-            return
-        asset = self.results[int(selection[0])]
-        lines = [f"{asset.status}  {asset.file}", ""]
-        for check in asset.checks:
-            lines.extend((f"{check.result} | {check.check.replace('_', ' ')}",
-                          f"Expected: {check.expected}", f"Actual: {check.actual}"))
-            if check.result != "PASS":
-                lines.extend((check.message, f"Next step: {FIX_HINTS.get(check.check, 'Review this asset.')}"))
-            lines.append("")
-        if len(asset.checks) < 6:
-            lines.append("Metadata checks were not run because the file could not be inspected as PCM WAV.")
-        self._set_details("\n".join(lines))
+        assets = self.selected_assets()
+        self.selection_note.set(f"{len(assets)} selected")
+        self._fill_text(self.overview, selection_overview(assets, self._scan_profile.name))
+        self._fill_text(self.metadata, metadata_details(assets))
+        self._fill_text(self.details, check_details(assets))
 
     def export_csv(self) -> None:
         if not self.complete or self.stale or self.busy:

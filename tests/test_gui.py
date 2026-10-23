@@ -291,6 +291,41 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(before, {p: hashlib.sha256(p.read_bytes()).digest() for p in before})
         self.errors.assert_not_called()
 
+    def test_metadata_tabs_and_multiple_selection_survive_a_filter_refresh(self):
+        self.scan()
+        indices = [str(i) for i, asset in enumerate(self.app.results) if asset.status == "PASS"]
+        self.app.tree.selection_set(indices)
+        self.root.update()
+        self.assertEqual(self.app.selection_note.get(), "2 selected")
+        self.assertIn("48000 Hz", self.app.metadata.get("1.0", "end"))
+        self.assertIn("24-bit", self.app.metadata.get("1.0", "end"))
+        self.assertEqual([self.app.context_tabs.tab(tab, "text") for tab in self.app.context_tabs.tabs()],
+                         ["Overview", "Audio metadata", "Validation checks"])
+        self.app.result_filter.set("Passed")
+        self.app._refresh_results()
+        self.assertEqual(set(self.app.tree.selection()), set(indices))
+        self.assertEqual(self.app.tree.item(indices[0], "values")[2], "PCM WAV")
+
+    def test_native_shift_toggle_and_select_all_bindings(self):
+        self.scan()
+        items = self.app.tree.get_children()
+        tree = self.app.tree
+
+        def click(item, modifier=""):
+            x, y, width, height = tree.bbox(item)
+            tree.event_generate(f"<{modifier}Button-1>", x=x + 8, y=y + height // 2)
+            tree.event_generate("<ButtonRelease-1>", x=x + 8, y=y + height // 2)
+            self.root.update()
+
+        click(items[0])
+        click(items[2], "Shift-")
+        self.assertEqual(set(tree.selection()), set(items[:3]))
+        modifier = "Command-" if tree.tk.call("tk", "windowingsystem") == "aqua" else "Control-"
+        click(items[1], modifier)
+        self.assertEqual(set(tree.selection()), {items[0], items[2]})
+        self.app._select_all()
+        self.assertEqual(set(tree.selection()), set(items))
+
     def test_rule_changes_mark_results_stale_and_require_rescan(self):
         self.scan()
         self.assertFalse(self.app.export_button.instate(["disabled"]))
