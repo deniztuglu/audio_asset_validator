@@ -2,6 +2,7 @@
 
 from collections import Counter
 from pathlib import Path
+import re
 from typing import Sequence
 
 from validator import AssetResult
@@ -19,10 +20,46 @@ FIX_HINTS = {
 }
 
 
+def display_value(key: str, value: str) -> str:
+    """Format existing check strings for the GUI; engine/CSV values stay intact."""
+    if key == "sample_rate" and re.fullmatch(r"[0-9]+ Hz", value):
+        whole, fraction = divmod(int(value[:-3]), 1000)
+        number = f"{whole}.{fraction:03d}".rstrip("0").rstrip(".") if fraction else str(whole)
+        return f"{number} kHz"
+    if key == "channels":
+        parts = value.split(", ")
+        if all(part.isdigit() for part in parts):
+            return " / ".join({"1": "Mono (1)", "2": "Stereo (2)"}.get(part, f"{part} channels") for part in parts)
+    if key == "duration":
+        if value == "0 frames / 0 seconds":
+            return "Empty (0 frames)"
+        match = re.fullmatch(r"(>= )?([0-9]+(?:\.[0-9]+)?(?:e[+-]?[0-9]+)?) seconds", value)
+        if match:
+            seconds = float(match[2])
+            number = f"{seconds:.3f}" if seconds == 0 or seconds >= 0.001 else f"{seconds:g}"
+            return f"{'at least ' if match[1] else ''}{number} s"
+    return value
+
+
+def issue_summary(asset: AssetResult) -> str:
+    issues = []
+    for check in asset.checks:
+        if check.result == "PASS":
+            continue
+        if check.check == "naming":
+            issues.append("Filename does not match naming rule")
+        elif check.check == "format":
+            issues.append("Unsupported or unreadable file; expected PCM WAV")
+        else:
+            label = dict(METADATA).get(check.check, check.check)
+            issues.append(f"{label}: {display_value(check.check, check.actual)}; expected {display_value(check.check, check.expected)}")
+    return " · ".join(issues) or "All checks passed"
+
+
 def metadata_values(asset: AssetResult) -> tuple[str, ...]:
     checks = {check.check: check for check in asset.checks}
     return tuple(("Unsupported / unreadable" if key == "format" and checks[key].result == "ERROR"
-                  else checks[key].actual) if key in checks else "Not inspected"
+                  else display_value(key, checks[key].actual)) if key in checks else "Not inspected"
                  for key, _ in METADATA)
 
 
@@ -33,9 +70,8 @@ def selection_overview(assets: Sequence[AssetResult], profile_name: str) -> str:
     lines = [f"{len(assets)} selected", f"Scan profile: {profile_name}",
              f"{counts['PASS']} passed | {counts['WARNING']} with warnings | {counts['ERROR']} with errors", ""]
     for asset in assets:
-        issues = [check.check.replace("_", " ") for check in asset.checks if check.result != "PASS"]
         lines.append(f"{asset.status}  {asset.file}")
-        lines.append("Needs attention: " + ", ".join(issues) if issues else "All six validation checks passed.")
+        lines.append("Needs attention: " + issue_summary(asset) if asset.status != "PASS" else "All six validation checks passed.")
         lines.append("")
     return "\n".join(lines)
 
@@ -48,7 +84,7 @@ def metadata_details(assets: Sequence[AssetResult]) -> str:
         for (key, label), value in zip(METADATA, metadata_values(asset)):
             lines.append(f"{label}: {value}")
             if key in checks:
-                lines.append(f"  {checks[key].result} | Expected: {checks[key].expected}")
+                lines.append(f"  {checks[key].result} | Expected: {display_value(key, checks[key].expected)}")
         lines.append("")
     return "\n".join(lines) or "No assets selected."
 

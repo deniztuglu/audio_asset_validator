@@ -15,8 +15,9 @@ except ImportError:
 
 from naming_rules import CASING, PREFIXES, NamingPreset, normalize_prefix
 from project_profiles import ProjectProfile
-from result_views import METADATA, check_details, metadata_details, metadata_values, selection_overview
+from result_views import METADATA, check_details, display_value, issue_summary, metadata_details, metadata_values, selection_overview
 from scan_worker import ScanWorker, output_destination
+from ui_widgets import Disclosure
 from validator import AssetResult, Rules, write_csv
 
 
@@ -62,7 +63,12 @@ class ValidatorApp:
         self.example = tk.StringVar(master=root)
         self.summary = tk.StringVar(master=root, value="Choose an audio folder, review the rules, then scan.")
         self.profile_status = tk.StringVar(master=root, value="Default profile : save a copy for your project.")
+        self.active_profile = tk.StringVar(master=root)
+        self.rule_summary = tk.StringVar(master=root)
+        self.scan_notice = tk.StringVar(master=root)
+        self.digit_example = tk.StringVar(master=root)
         self.result_filter = tk.StringVar(master=root, value="All files")
+        self.table_view = tk.StringVar(master=root, value="Compact")
         self.selection_note = tk.StringVar(master=root, value="No assets selected")
         self._build_window()
         for variable in (self.profile_name, self.naming_mode, self.capitalization,
@@ -77,9 +83,10 @@ class ValidatorApp:
         if sys.platform == "darwin" and isinstance(root, tk.Tk):
             self.root.createcommand("::tk::mac::Quit", self.close)
         modifier = "Command" if sys.platform == "darwin" else "Control"
-        self.root.bind(f"<{modifier}-o>", lambda _: self.load_profile())
-        self.root.bind(f"<{modifier}-s>", lambda _: self.save_profile())
-        self.root.bind(f"<{modifier}-r>", lambda _: self.start_scan())
+        for window in (self.root, self.rules_window):
+            window.bind(f"<{modifier}-o>", lambda _: self.load_profile())
+            window.bind(f"<{modifier}-s>", lambda _: self.save_profile())
+            window.bind(f"<{modifier}-r>", lambda _: self.start_scan())
         self.tree.bind(f"<{modifier}-a>", self._select_all)
         self._poll_id = self.root.after(40, self._poll)
 
@@ -108,58 +115,75 @@ class ValidatorApp:
         container = ttk.Frame(self.root, padding=16)
         container.pack(fill="both", expand=True)
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(3, weight=1)
+        container.rowconfigure(4, weight=1)
         ttk.Label(container, text="Audio Asset Validator", style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(container, text="Read-only preflight | Review exports before importing into your project").grid(row=1, column=0, sticky="w", pady=(2, 12))
+        ttk.Label(container, text="Choose a folder, check your rules, then scan. Original files stay untouched.").grid(row=1, column=0, sticky="w", pady=(2, 12))
         source = ttk.LabelFrame(container, text="Audio folder", padding=10)
         source.grid(row=2, column=0, sticky="ew")
         self._edit(ttk.Entry(source, textvariable=self.folder)).pack(side="left", fill="x", expand=True)
         self._edit(ttk.Button(source, text="Browse...", command=self.choose_folder)).pack(side="left", padx=(8, 0))
-        panes = ttk.Panedwindow(container, orient="horizontal")
-        panes.grid(row=3, column=0, sticky="nsew", pady=12)
-        rules = ttk.Frame(panes, padding=(0, 0, 12, 0), width=380)
-        results = ttk.Frame(panes)
-        panes.add(rules, weight=0)
-        panes.add(results, weight=1)
-        ttk.Label(rules, text="Project profile", style="Heading.TLabel").pack(anchor="w")
-        self._edit(ttk.Entry(rules, textvariable=self.profile_name)).pack(fill="x", pady=(6, 8))
-        buttons = ttk.Frame(rules)
-        buttons.pack(fill="x")
-        self._edit(ttk.Button(buttons, text="Load profile...", command=self.load_profile)).pack(side="left")
-        self._edit(ttk.Button(buttons, text="Save profile as...", command=self.save_profile)).pack(side="left", padx=8)
-        ttk.Label(rules, textvariable=self.profile_status, wraplength=350).pack(anchor="w", pady=(8, 12))
-        tabs = ttk.Notebook(rules)
-        tabs.pack(fill="both", expand=True)
-        audio = self._scrollable_tab(tabs, "Audio rules")
-        naming = self._scrollable_tab(tabs, "Naming")
-        self._audio_controls(audio)
-        self._naming_controls(naming)
+        self.scan_button = ttk.Button(source, text="Scan folder", command=self.start_scan)
+        self.scan_button.pack(side="left", padx=(12, 0))
+        self.cancel_button = ttk.Button(source, text="Cancel scan", command=self.cancel_scan)
+        profile = ttk.LabelFrame(container, text="Active project profile", padding=10)
+        profile.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        profile.columnconfigure(0, weight=1)
+        ttk.Label(profile, textvariable=self.active_profile, style="Heading.TLabel").grid(row=0, column=0, sticky="w")
+        self.edit_rules_button = self._edit(ttk.Button(profile, text="Edit rules...", command=self.open_rules))
+        self.edit_rules_button.grid(row=0, column=1, rowspan=2, padx=(12, 0))
+        self._edit(ttk.Button(profile, text="Load profile...", command=self.load_profile)).grid(row=0, column=2, rowspan=2, padx=(8, 0))
+        rule_label = ttk.Label(profile, textvariable=self.rule_summary, wraplength=850)
+        rule_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
+        profile.bind("<Configure>", lambda event: rule_label.configure(wraplength=max(240, event.width - 290)))
+        self._build_rules_editor()
+        results = ttk.Frame(container)
+        results.grid(row=4, column=0, sticky="nsew", pady=(12, 0))
         toolbar = ttk.Frame(results)
         toolbar.pack(fill="x", pady=(0, 8))
         ttk.Label(toolbar, text="Validation results", style="Heading.TLabel").pack(side="left")
-        selector = ttk.Combobox(toolbar, textvariable=self.result_filter, values=list(FILTERS),
+        selector = ttk.Combobox(toolbar, textvariable=self.table_view, values=("Full details", "Compact"),
                                 width=12, state="readonly")
         selector.pack(side="right")
-        selector.bind("<<ComboboxSelected>>", lambda _: self._refresh_results())
-        ttk.Label(results, textvariable=self.selection_note).pack(anchor="w")
+        selector.bind("<<ComboboxSelected>>", lambda _: self._set_table_view())
+        ttk.Label(toolbar, text="Table view:").pack(side="right", padx=(0, 6))
+        filters = ttk.Frame(results)
+        filters.pack(fill="x", pady=(0, 8))
+        self.filter_buttons = {}
+        for label in FILTERS:
+            button = ttk.Radiobutton(filters, text=label, value=label, variable=self.result_filter,
+                                     command=self._refresh_results, style="Toolbutton")
+            button.pack(side="left", padx=(0, 6))
+            self.filter_buttons[label] = button
+        self.notice_label = ttk.Label(results, textvariable=self.scan_notice, foreground="#9c3f00")
+        self.actions_bar = filters
+        ttk.Label(filters, textvariable=self.selection_note).pack(side="left", padx=(12, 0))
+        self.rename_button = ttk.Button(filters, text="Batch Rename...", command=self.open_batch_rename, state="disabled")
+        self.rename_button.pack(side="left", padx=(12, 0))
+        self.export_button = ttk.Button(filters, text="Export report (all files)...", command=self.export_csv, state="disabled")
+        self.export_button.pack(side="right")
         toggle = "Command" if sys.platform == "darwin" else "Ctrl"
-        ttk.Label(results, text=f"Shift-click selects a range; {toggle}-click toggles assets.").pack(anchor="w", pady=(0, 6))
+        ttk.Label(results, text=f"Shift-click: range  ·  {toggle}-click: individual files  ·  {toggle}-A: all visible").pack(anchor="w", pady=(0, 6))
         split = ttk.Panedwindow(results, orient="vertical")
         split.pack(fill="both", expand=True)
         list_frame = ttk.Frame(split)
         detail_frame = ttk.Frame(split)
         split.add(list_frame, weight=3)
         split.add(detail_frame, weight=2)
-        self.tree = ttk.Treeview(list_frame, columns=("status", "file", *(key for key, _ in METADATA)),
+        self.tree = ttk.Treeview(list_frame, columns=("status", "file", "issues", *(key for key, _ in METADATA)),
                                  show="headings", selectmode="extended")
         self.tree.heading("status", text="Status")
-        self.tree.heading("file", text="File (relative to audio folder)")
+        self.tree.heading("file", text="File / relative path")
         self.tree.column("status", width=75, stretch=False)
-        self.tree.column("file", width=245, minwidth=140)
-        widths = {"format": 95, "sample_rate": 100, "bit_depth": 80, "channels": 75, "duration": 135}
+        self.tree.column("file", width=280, minwidth=180)
+        self.tree.heading("issues", text="Issues / why it needs attention")
+        self.tree.column("issues", width=360, minwidth=240)
+        widths = {"format": 85, "sample_rate": 90, "bit_depth": 75, "channels": 90, "duration": 85}
         for key, label in METADATA:
             self.tree.heading(key, text=label)
             self.tree.column(key, width=widths[key], minwidth=60, stretch=False)
+        self.tree.tag_configure("ERROR", foreground="#a12622")
+        self.tree.tag_configure("WARNING", foreground="#875500")
+        self._set_table_view()
         scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         horizontal = ttk.Scrollbar(list_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
@@ -175,18 +199,53 @@ class ValidatorApp:
         self.metadata = self._context_tab("Audio metadata")
         self.details = self._context_tab("Validation checks")
         summary_label = ttk.Label(container, textvariable=self.summary, wraplength=1100)
-        summary_label.grid(row=4, column=0, sticky="w")
+        summary_label.grid(row=5, column=0, sticky="w", pady=(8, 0))
         container.bind("<Configure>", lambda event: summary_label.configure(wraplength=max(200, event.width)))
         footer = ttk.Frame(container)
-        footer.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        self.scan_footer = footer
         self.progress = ttk.Progressbar(footer, mode="determinate")
-        self.progress.pack(side="left", fill="x", expand=True, padx=(0, 12))
-        self.scan_button = ttk.Button(footer, text="Scan folder", command=self.start_scan)
-        self.scan_button.pack(side="left")
-        self.cancel_button = ttk.Button(footer, text="Cancel scan", command=self.cancel_scan, state="disabled")
-        self.cancel_button.pack(side="left", padx=8)
-        self.export_button = ttk.Button(footer, text="Export CSV...", command=self.export_csv, state="disabled")
-        self.export_button.pack(side="left")
+        self.progress.pack(fill="x", expand=True)
+        self._update_filter_counts()
+
+    def _build_rules_editor(self) -> None:
+        self.rules_window = tk.Toplevel(self.root)
+        self.rules_window.withdraw()
+        self.rules_window.title("Project rules")
+        self.rules_window.transient(self.root)
+        self.rules_window.geometry(f"600x{min(790, self.root.winfo_screenheight() - 100)}")
+        self.rules_window.minsize(540, min(620, self.root.winfo_screenheight() - 100))
+        self.rules_window.protocol("WM_DELETE_WINDOW", self.rules_window.withdraw)
+        rules = ttk.Frame(self.rules_window, padding=16)
+        rules.pack(fill="both", expand=True)
+        ttk.Label(rules, text="Project rules", style="Heading.TLabel").pack(anchor="w")
+        ttk.Label(rules, text="Changes apply immediately. Scan again to refresh existing results.", wraplength=520).pack(anchor="w", pady=(4, 12))
+        ttk.Label(rules, text="Profile name").pack(anchor="w")
+        self._edit(ttk.Entry(rules, textvariable=self.profile_name)).pack(fill="x", pady=(4, 8))
+        buttons = ttk.Frame(rules)
+        buttons.pack(fill="x")
+        self._edit(ttk.Button(buttons, text="Load profile...", command=self.load_profile)).pack(side="left")
+        self._edit(ttk.Button(buttons, text="Save profile as...", command=self.save_profile)).pack(side="left", padx=8)
+        ttk.Label(rules, textvariable=self.profile_status, wraplength=520).pack(anchor="w", pady=(8, 12))
+        tabs = ttk.Notebook(rules)
+        tabs.pack(fill="both", expand=True)
+        self._audio_controls(self._scrollable_tab(tabs, "Audio rules"))
+        self._naming_controls(self._scrollable_tab(tabs, "Naming rules", with_preview=True))
+        ttk.Button(rules, text="Done", command=self.rules_window.withdraw).pack(anchor="e", pady=(12, 0))
+
+    def open_rules(self) -> None:
+        if self.busy:
+            return
+        self.rules_window.deiconify()
+        self.rules_window.lift()
+        self.rules_window.focus_set()
+
+    def _set_table_view(self) -> None:
+        self.tree.configure(displaycolumns=("status", "file", "issues") if self.table_view.get() == "Compact" else "#all")
+
+    def _update_filter_counts(self) -> None:
+        for label, status in FILTERS.items():
+            count = self.counts[status] if status else len(self.results)
+            self.filter_buttons[label].configure(text=f"{label} ({count})")
 
     def _context_tab(self, title: str) -> tk.Text:
         frame = ttk.Frame(self.context_tabs)
@@ -199,10 +258,13 @@ class ValidatorApp:
         scroll.pack(side="right", fill="y")
         return text
 
-    def _scrollable_tab(self, notebook: ttk.Notebook, title: str) -> ttk.Frame:
+    def _scrollable_tab(self, notebook: ttk.Notebook, title: str, with_preview: bool = False) -> ttk.Frame:
         tab = ttk.Frame(notebook)
         notebook.add(tab, text=title)
-        canvas = tk.Canvas(tab, width=350, height=350, highlightthickness=0,
+        if with_preview:
+            self.naming_preview = ttk.LabelFrame(tab, text="Try a filename — no file is changed", padding=8)
+            self.naming_preview.pack(side="bottom", fill="x", pady=(8, 0))
+        canvas = tk.Canvas(tab, width=470, height=350, highlightthickness=0,
                            background=ttk.Style(self.root).lookup("TFrame", "background"))
         scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
@@ -222,7 +284,7 @@ class ValidatorApp:
                 return "break"
             return None
 
-        self.root.bind("<MouseWheel>", wheel, add="+")
+        notebook.winfo_toplevel().bind("<MouseWheel>", wheel, add="+")
         return content
 
     def _audio_controls(self, parent: ttk.Frame) -> None:
@@ -232,31 +294,32 @@ class ValidatorApp:
         ttk.Label(parent, text="Allowed bit depths").pack(anchor="w")
         depths = ttk.Frame(parent)
         depths.pack(fill="x", pady=(4, 6))
-        for depth, variable in self.depths.items():
-            self._edit(ttk.Checkbutton(depths, text=f"{depth}-bit", variable=variable)).pack(side="left")
-        ttk.Label(parent, text="Other bit depths (comma-separated, optional)").pack(anchor="w")
-        self._edit(ttk.Entry(parent, textvariable=self.other_depths)).pack(fill="x", pady=(4, 12))
+        for depth in (16, 24):
+            self._edit(ttk.Checkbutton(depths, text=f"{depth}-bit", variable=self.depths[depth])).pack(side="left", padx=(0, 12))
         ttk.Label(parent, text="Allowed channels").pack(anchor="w")
         channels = ttk.Frame(parent)
         channels.pack(fill="x", pady=(4, 6))
         for count, variable in self.channels.items():
-            self._edit(ttk.Checkbutton(channels, text={1: "Mono", 2: "Stereo"}[count], variable=variable)).pack(side="left", padx=(0, 12))
-        ttk.Label(parent, text="Other channel counts (e.g. 6, 8; optional)").pack(anchor="w")
-        self._edit(ttk.Entry(parent, textvariable=self.other_channels)).pack(fill="x", pady=(4, 12))
+            self._edit(ttk.Checkbutton(channels, text={1: "Mono (1)", 2: "Stereo (2)"}[count], variable=variable)).pack(side="left", padx=(0, 12))
         ttk.Label(parent, text="Minimum duration (seconds)").pack(anchor="w")
         self._edit(ttk.Entry(parent, textvariable=self.minimum_duration)).pack(fill="x", pady=(4, 12))
-        ttk.Label(parent, text="Short audio produces a warning. Empty audio is an error.\n\n"
-                  "Supported format: uncompressed integer PCM WAV.\n"
-                  "These settings validate exports; they do not convert audio.", wraplength=330).pack(anchor="w")
+        ttk.Label(parent, text="Short audio produces a warning. Empty audio is an error.\n"
+                  "Supported format: uncompressed integer PCM WAV.", wraplength=480).pack(anchor="w", pady=(0, 12))
+        self.audio_advanced = Disclosure(parent, "advanced audio settings")
+        self.audio_advanced.pack(fill="x")
+        advanced = self.audio_advanced.content
+        ttk.Label(advanced, text="Additional allowed bit depths").pack(anchor="w")
+        depths = ttk.Frame(advanced)
+        depths.pack(fill="x", pady=(4, 8))
+        for depth in (8, 32):
+            self._edit(ttk.Checkbutton(depths, text=f"{depth}-bit", variable=self.depths[depth])).pack(side="left", padx=(0, 12))
+        ttk.Label(advanced, text="Other bit depths (comma-separated)").pack(anchor="w")
+        self._edit(ttk.Entry(advanced, textvariable=self.other_depths)).pack(fill="x", pady=(4, 12))
+        ttk.Label(advanced, text="Additional channel counts (e.g. 6, 8)").pack(anchor="w")
+        self._edit(ttk.Entry(advanced, textvariable=self.other_channels)).pack(fill="x", pady=(4, 12))
 
     def _naming_controls(self, parent: ttk.Frame) -> None:
-        self.rename_button = ttk.Button(parent, text="Batch Rename...", command=self.open_batch_rename, state="disabled")
-        self.rename_button.pack(fill="x", pady=(0, 4))
-        ttk.Label(parent, text="Select assets in results, then preview renamed copies. Originals stay untouched.", wraplength=330).pack(anchor="w", pady=(0, 12))
-        modes = ttk.Frame(parent)
-        modes.pack(fill="x", pady=(0, 10))
-        for label, mode in (("Naming preset", "preset"), ("Advanced regex", "advanced")):
-            self._edit(ttk.Radiobutton(modes, text=label, value=mode, variable=self.naming_mode)).pack(side="left", padx=(0, 10))
+        self._edit(ttk.Radiobutton(parent, text="Build a naming rule", value="preset", variable=self.naming_mode)).pack(anchor="w", pady=(0, 10))
         ttk.Label(parent, text="Allowed prefixes (select one or more)").pack(anchor="w")
         self.prefix_frame = ttk.Frame(parent)
         self.prefix_frame.pack(fill="x", pady=(4, 8))
@@ -277,20 +340,24 @@ class ValidatorApp:
         ttk.Label(parent, text="Add selects the new prefix. Remove deletes the entered prefix.\n"
                   "Click a checkbox to copy its name into the field.", wraplength=330).pack(anchor="w", pady=(0, 10))
         for label, variable, values in (("Word casing", self.capitalization, CASING),
-                                        ("Variation digits", self.variation_digits, (1, 2, 3, 4))):
+                                        ("Number suffix digits", self.variation_digits, (1, 2, 3, 4))):
             ttk.Label(parent, text=label).pack(anchor="w")
             widget = self._edit(ttk.Combobox(parent, textvariable=variable, values=values, state="readonly"), "readonly")
             widget.pack(fill="x", pady=(4, 10))
             self._preset_controls.append(widget)
+        ttk.Label(parent, textvariable=self.digit_example).pack(anchor="w", pady=(0, 8))
         ttk.Label(parent, text="Prefixes remain uppercase; word casing is configurable.\n"
                   "WAV extension is case-insensitive.", wraplength=330).pack(anchor="w", pady=(0, 10))
-        ttk.Label(parent, text="Full filename regex").pack(anchor="w")
-        self.regex_entry = self._edit(ttk.Entry(parent, textvariable=self.regex))
+        ttk.Label(self.naming_preview, textvariable=self.example, wraplength=500).pack(anchor="w")
+        ttk.Entry(self.naming_preview, textvariable=self.test_filename).pack(fill="x", pady=4)
+        ttk.Label(self.naming_preview, textvariable=self.preview, wraplength=500).pack(anchor="w")
+        self.naming_advanced = Disclosure(parent, "custom naming pattern (advanced)")
+        self.naming_advanced.pack(fill="x", pady=(12, 0))
+        advanced = self.naming_advanced.content
+        self._edit(ttk.Radiobutton(advanced, text="Use a regular expression instead", value="advanced", variable=self.naming_mode)).pack(anchor="w")
+        ttk.Label(advanced, text="Full filename regex").pack(anchor="w", pady=(8, 0))
+        self.regex_entry = self._edit(ttk.Entry(advanced, textvariable=self.regex))
         self.regex_entry.pack(fill="x", pady=(4, 10))
-        ttk.Label(parent, textvariable=self.example, wraplength=330).pack(anchor="w", pady=(0, 10))
-        ttk.Label(parent, text="Try a filename (no file is changed)").pack(anchor="w")
-        ttk.Entry(parent, textvariable=self.test_filename).pack(fill="x", pady=4)
-        ttk.Label(parent, textvariable=self.preview, wraplength=330).pack(anchor="w")
 
     def _replace_prefixes(self, available, selected) -> None:
         """Rebuild checkbox choices and retire their old Tcl callbacks on the UI thread."""
@@ -416,6 +483,10 @@ class ValidatorApp:
         finally:
             self._applying = False
         self.dirty = False
+        if profile.naming is None:
+            self.naming_advanced.set_expanded(True)
+        if self.other_depths.get() or self.other_channels.get() or self.depths[8].get() or self.depths[32].get():
+            self.audio_advanced.set_expanded(True)
         self._invalidate_results()
         self._sync_controls()
         self._update_preview()
@@ -425,6 +496,8 @@ class ValidatorApp:
         if self._applying:
             return
         self.dirty = True
+        if self.naming_mode.get() == "advanced":
+            self.naming_advanced.set_expanded(True)
         self._invalidate_results()
         self._sync_controls()
         self._update_preview()
@@ -441,8 +514,23 @@ class ValidatorApp:
 
     def _update_title(self) -> None:
         self.root.title(f"Audio Asset Validator : {self.profile_name.get()}{' *' if self.dirty else ''}")
+        self.active_profile.set(f"{self.profile_name.get() or 'Unnamed profile'}{'  ·  Unsaved changes' if self.dirty else ''}")
+        try:
+            profile = self.profile_from_controls()
+            rules = profile.rules
+            naming = (f"Prefixes: {', '.join(profile.naming.prefixes)} · {profile.naming.variation_digits}-digit number suffix"
+                      if profile.naming else "Custom naming pattern")
+            self.rule_summary.set(
+                f"PCM WAV · {display_value('sample_rate', f'{rules.sample_rate} Hz')} · "
+                f"{' / '.join(str(depth) for depth in rules.bit_depths)}-bit · "
+                f"{display_value('channels', ', '.join(map(str, rules.channels)))}\n"
+                f"{naming} · Minimum duration: {rules.min_duration_seconds:g} s")
+        except (ValueError, OverflowError) as error:
+            self.rule_summary.set(f"Rules need attention: {error}")
 
     def _update_preview(self) -> None:
+        digits = self.variation_digits.get()
+        self.digit_example.set(f"Example number suffix: {'1'.zfill(int(digits))}" if digits in ("1", "2", "3", "4") else "Choose 1–4 number suffix digits")
         try:
             if self.naming_mode.get() == "preset":
                 preset = self._preset()
@@ -474,6 +562,19 @@ class ValidatorApp:
             self.regex_entry.configure(state="normal" if self.naming_mode.get() == "advanced" else "readonly")
         self.scan_button.configure(state="disabled" if self.busy else "normal")
         self.cancel_button.configure(state="normal" if self.busy else "disabled")
+        if self.busy:
+            self.cancel_button.pack(side="left", padx=(8, 0))
+            self.scan_footer.grid(row=6, column=0, sticky="ew", pady=(8, 0))
+        else:
+            self.cancel_button.pack_forget()
+            self.scan_footer.grid_remove()
+        notice = ("Rules or folder changed — scan again. Displayed results are from the previous scan." if self.stale
+                  else "Incomplete scan — scan again before exporting or renaming." if self.worker and not self.busy and not self.complete else "")
+        self.scan_notice.set(notice)
+        if notice:
+            self.notice_label.pack(fill="x", before=self.actions_bar, pady=(0, 8))
+        else:
+            self.notice_label.pack_forget()
         self.export_button.configure(state="normal" if self.complete and not self.stale and not self.busy else "disabled")
         self.rename_button.configure(state="normal" if self.complete and not self.stale and not self.busy and self.tree.selection() else "disabled")
 
@@ -546,6 +647,7 @@ class ValidatorApp:
         self._scan_root, self._scan_profile = folder, profile
         self.results = []
         self.counts = {"PASS": 0, "WARNING": 0, "ERROR": 0}
+        self._update_filter_counts()
         self.tree.delete(*self.tree.get_children())
         self._set_details("")
         self.busy, self.complete, self.stale = True, False, False
@@ -597,6 +699,7 @@ class ValidatorApp:
                     if self.tree.get_children() and not self.tree.selection():
                         self.tree.selection_set(self.tree.get_children()[0])
                     break
+            self._update_filter_counts()
         self._poll_id = self.root.after(40, self._poll)
 
     def _counts_text(self) -> str:
@@ -606,7 +709,7 @@ class ValidatorApp:
     def _insert_asset(self, index: int, asset: AssetResult) -> None:
         wanted = FILTERS[self.result_filter.get()]
         if wanted is None or asset.status == wanted:
-            self.tree.insert("", "end", iid=str(index), values=(asset.status, asset.file, *metadata_values(asset)))
+            self.tree.insert("", "end", iid=str(index), values=(asset.status, asset.file, issue_summary(asset), *metadata_values(asset)), tags=(asset.status,))
 
     def _refresh_results(self) -> None:
         selected = set(self.tree.selection())

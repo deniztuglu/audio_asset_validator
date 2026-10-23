@@ -368,6 +368,9 @@ class GuiTests(unittest.TestCase):
 
     def test_small_window_keeps_scan_buttons_visible_and_rules_scrollable(self):
         self.root.geometry("1000x680")
+        self.app.open_rules()
+        self.app.rules_window.geometry("540x620")
+        self.app.audio_advanced.set_expanded(True)
         self.root.update()
         button = self.app.scan_button
         self.assertLessEqual(button.winfo_rooty() + button.winfo_height(),
@@ -378,6 +381,43 @@ class GuiTests(unittest.TestCase):
         self.root.update()
         self.assertGreater(canvas.yview()[0], 0)
 
+    def test_rules_editor_reopens_without_losing_edits_and_saving_clears_unsaved_state(self):
+        self.assertEqual(self.app.rules_window.state(), "withdrawn")
+        self.assertIn("48 kHz", self.app.rule_summary.get())
+        self.app.edit_rules_button.invoke()
+        self.root.update()
+        self.assertTrue(self.app.rules_window.winfo_viewable())
+        self.app.sample_rate.set("96000")
+        self.app.rules_window.withdraw()
+        self.app.open_rules()
+        self.assertEqual(self.app.sample_rate.get(), "96000")
+        self.assertIn("96 kHz", self.app.rule_summary.get())
+        self.assertIn("Unsaved changes", self.app.active_profile.get())
+        with patch("gui.filedialog.asksaveasfilename", return_value=str(self.directory / "profile.json")):
+            self.app.save_profile()
+        self.assertNotIn("Unsaved changes", self.app.active_profile.get())
+        self.assertFalse(self.app.audio_advanced.expanded.get())
+
+    def test_count_filters_and_compact_table_preserve_metadata_and_selection(self):
+        self.scan()
+        for label, count in (("All files", 10), ("Errors", 7), ("Warnings", 1), ("Passed", 2)):
+            self.assertIn(f"({count})", self.app.filter_buttons[label].cget("text"))
+        self.app.filter_buttons["Errors"].invoke()
+        self.assertEqual(len(self.app.tree.get_children()), 7)
+        index = str(next(i for i, asset in enumerate(self.app.results) if asset.file == "SFX_Explosion_03.wav"))
+        self.app.tree.selection_set(index)
+        self.assertIn("44.1 kHz; expected 48 kHz", self.app.tree.set(index, "issues"))
+        self.app.table_view.set("Compact")
+        self.app._set_table_view()
+        self.assertEqual(self.app.tree.cget("displaycolumns"), ("status", "file", "issues"))
+        self.assertEqual(self.app.tree.selection(), (index,))
+        self.assertEqual(self.app.tree.set(index, "sample_rate"), "44.1 kHz")
+        self.app.table_view.set("Full details")
+        self.app._set_table_view()
+        self.assertEqual(self.app.tree.cget("displaycolumns"), ("#all",))
+        self.assertIs(self.app.rename_button.winfo_toplevel(), self.root)
+        self.assertIs(self.app.export_button.winfo_toplevel(), self.root)
+
     def test_custom_regex_and_nonstandard_allowed_values_round_trip_through_dialogs(self):
         pattern = r"VO_[A-Z]+_(?:take|alt)[0-9]+\.wav"
         profile = ProjectProfile("Custom", Rules(naming_pattern=pattern, bit_depths=(20, 24), channels=(1, 6)), None)
@@ -387,6 +427,8 @@ class GuiTests(unittest.TestCase):
         with patch("gui.filedialog.askopenfilename", return_value=str(legacy)):
             self.app.load_profile()
         self.assertEqual(self.app.naming_mode.get(), "advanced")
+        self.assertTrue(self.app.naming_advanced.expanded.get())
+        self.assertTrue(self.app.audio_advanced.expanded.get())
         self.assertEqual(self.app.regex.get(), pattern)
         self.app.profile_name.set("Custom")
         saved = self.directory / "saved.json"
@@ -447,14 +489,14 @@ class GuiTests(unittest.TestCase):
         self.app.tree.selection_set(indices)
         self.root.update()
         self.assertEqual(self.app.selection_note.get(), "2 selected")
-        self.assertIn("48000 Hz", self.app.metadata.get("1.0", "end"))
+        self.assertIn("48 kHz", self.app.metadata.get("1.0", "end"))
         self.assertIn("24-bit", self.app.metadata.get("1.0", "end"))
         self.assertEqual([self.app.context_tabs.tab(tab, "text") for tab in self.app.context_tabs.tabs()],
                          ["Overview", "Audio metadata", "Validation checks"])
         self.app.result_filter.set("Passed")
         self.app._refresh_results()
         self.assertEqual(set(self.app.tree.selection()), set(indices))
-        self.assertEqual(self.app.tree.item(indices[0], "values")[2], "PCM WAV")
+        self.assertEqual(self.app.tree.set(indices[0], "format"), "PCM WAV")
 
     def test_native_shift_toggle_and_select_all_bindings(self):
         self.scan()
@@ -481,11 +523,14 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(self.app.export_button.instate(["disabled"]))
         self.app.sample_rate.set("44100")
         self.assertTrue(self.app.stale)
+        self.assertIn("scan again", self.app.scan_notice.get())
+        self.assertTrue(self.app.rename_button.instate(["disabled"]))
         self.assertTrue(self.app.export_button.instate(["disabled"]))
         self.assertIn("scan again", self.app.summary.get())
         self.app.start_scan()
         self.pump_until(lambda: not self.app.busy)
         self.assertFalse(self.app.stale)
+        self.assertEqual(self.app.scan_notice.get(), "")
         self.assertEqual(self.app._scan_profile.rules.sample_rate, 44100)
 
     def test_ui_remains_responsive_and_cancel_disables_partial_export(self):
